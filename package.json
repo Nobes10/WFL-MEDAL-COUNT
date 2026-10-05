@@ -1,0 +1,65 @@
+{
+  "name": "wfl-medal-count",
+  "version": "0.1.0",
+  "description": "Whyalla Football League medal count — enter 3-2-1 before the night, present offline",
+  "author": "Whyalla Football League",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "node scripts/build-electron.mjs && concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .\"",
+    "icon": "node scripts/make-icon.mjs",
+    "build": "vite build && node scripts/build-electron.mjs",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "au.com.whyallafootball.medal-count",
+    "productName": "WFL Medal Count",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "build/icon.png",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis",
+        "dir"
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "WFL Medal Count",
+      "artifactName": "WFL-Medal-Count-Setup-${version}.${ext}",
+      "include": "build/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "WFL-Medal-Count-Portable.${ext}"
+    }
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
+    "vite": "^6.2.0",
+    "wait-on": "^8.0.2"
+  }
+}

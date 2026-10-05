@@ -1,0 +1,278 @@
+.toty-pitch {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 16px 24px;
+  align-items: stretch;
+}
+.afl-field-wrap {
+  container-type: size;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: #050505;
+  border-radius: 10px;
+}
+.afl-field {
+  --oval-w: min(100cqw, calc(100cqh * 0.758));
+  --oval-h: min(100cqh, calc(100cqw / 0.758));
+  position: relative;
+  width: var(--oval-w);
+  height: var(--oval-h);
+  container-type: size;
+  background: transparent;
+}
+.afl-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.afl-50 {
+  font-family: "Arial Black", "Arial Narrow", sans-serif;
+  font-size: 4.6px;
+  font-weight: 800;
+}
+.toty-spot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: min(26cqw, 228px);
+  min-width: min(26cqw, 228px);
+  max-width: min(28.6cqw, 251px);
+  padding: 5px 8px 6px 5px;
+  display: grid;
+  grid-template-columns: minmax(42px, 0.42fr) minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  background: #1a1612;
+  border: 1px solid #3a3228;
+  border-radius: 3px;
+  color: #fff;
+  z-index: 1;
+  font: inherit;
+}
+button.toty-spot { cursor: pointer; }
+button.toty-spot:hover { border-color: #e3b341; z-index: 3; }
+.toty-spot.filled {
+  border-color: #c4a15a;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  z-index: 2;
+}
+.toty-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 2px 8px 0;
+}
+.toty-side h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted, #8b9bb0);
+}
+.toty-side-slot {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 5px;
+  padding: 5px 8px 10px 5px;
+  text-align: left;
+  background: #1a1612;
+  border: 1px solid #3a3228;
+  border-radius: 3px;
+  color: #fff;
+  font: inherit;
+}
+button.toty-side-slot { cursor: pointer; }
+button.toty-side-slot:hover { border-color: #e3b341; }
+.toty-side-slot.filled { border-color: #c4a15a; }
+.toty-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 5 / 6;
+  flex: 0 0 auto;
+  background: repeating-linear-gradient(
+    -45deg,
+    #f3f1ea,
+    #f3f1ea 6px,
+    #e4e0d6 6px,
+    #e4e0d6 7px
+  );
+  border: 2px solid #c5a059;
+  border-radius: 42% 42% 6px 6px / 16% 16% 6px 6px;
+  overflow: visible;
+}
+.toty-side-slot .toty-frame {
+  width: 68px;
+  height: 82px;
+  aspect-ratio: auto;
+}
+.toty-frame > img,
+.toty-frame i {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+  background: transparent;
+  border: 0;
+  border-radius: 40% 40% 4px 4px / 14% 14% 4px 4px;
+}
+.toty-frame.is-logo {
+  background: #111;
+}
+.toty-frame.is-logo > img {
+  object-fit: contain;
+  object-position: center;
+  padding: 12%;
+  box-sizing: border-box;
+}
+.toty-frame i {
+  display: grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 14px;
+  font-weight: 800;
+  color: #8a7a55;
+}
+.toty-tab {
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 18px;
+  background: #111;
+  clip-path: polygon(0 0, 100% 0, 100% 58%, 50% 100%, 0 58%);
+  display: grid;
+  place-items: start center;
+  padding-top: 2px;
+  z-index: 1;
+}
+.toty-tab img,
+.toty-tab b {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.toty-tab b {
+  display: block;
+  font-size: 8px;
+  line-height: 12px;
+  text-align: center;
+  color: #e3b341;
+}
+.toty-names {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+}
+.toty-names em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #e3b341;
+}
+.toty-names strong {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  font-family: "Arial Narrow", "Segoe UI Condensed", "Segoe UI", sans-serif;
+  font-size: clamp(12px, 3.6cqw, 24px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 0.92;
+  white-space: nowrap;
+}
+.toty-spot:not(.filled) .toty-names strong {
+  font-size: clamp(9px, 2.3cqw, 13px);
+  letter-spacing: 0.04em;
+}
+.toty-side-slot .toty-names strong {
+  font-size: clamp(14px, 1.5vw, 20px);
+}
+.toty-names small {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  margin-top: 3px;
+  color: #d7d0c6;
+  font-family: "Arial Narrow", "Segoe UI Condensed", "Segoe UI", sans-serif;
+  font-size: clamp(8px, 2.1cqw, 12px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.toty-side-slot .toty-names small {
+  font-size: 12px;
+}
+.toty-spot.just-in {
+  animation: totyPop 0.55s ease-out;
+}
+@keyframes totyPop {
+  from { opacity: 0; transform: translate(-50%, -42%) scale(0.86); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.toty-side-slot.just-in {
+  animation: totyRise 0.5s ease-out;
+}
+@keyframes totyRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+.toty-presented {
+  margin-top: auto;
+  padding: 16px 14px 16px;
+  background: #fff;
+  border-radius: 12px;
+  text-align: center;
+}
+.toty-presented p {
+  margin: 0 0 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 18px;
+  font-weight: 800;
+  color: #6b5a2e;
+}
+.toty-presented img {
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+.toty-presented strong {
+  display: block;
+  color: #111;
+  font-size: 32px;
+}
+.toty-presented.empty {
+  background: rgba(255, 255, 255, 0.08);
+}
+.toty-presented.empty p,
+.toty-presented.empty strong {
+  color: #8b9bb0;
+}
