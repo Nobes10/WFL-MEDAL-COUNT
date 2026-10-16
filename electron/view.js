@@ -26,7 +26,7 @@ import {
   normalizeToty,
   normalizeLifeMembers,
   lifeMemberBeats,
-  leagueGradeFrom,
+  totyGradeFrom,
   collectGrandFinalFixtures,
   pickSponsorsForPage,
   isWflMemberClub,
@@ -40,6 +40,29 @@ import { mediaUrl } from './store.js';
 import { buildSlides, clubLabelForVote, gradeProgress, playerName, tallyGrade } from './tally.js';
 import { scoreFields } from './score.js';
 
+function rememberPlayedClub(entry, player, clubs) {
+  const club = (clubs ?? []).find((item) => item.id === player.clubId);
+  const rawName = player.clubName || club?.name || '';
+  const name = presentClubName(rawName);
+  const key = canonicalClubKey(rawName) || String(player.clubId || name);
+  if (!key) return;
+  if (!entry.clubList) entry.clubList = [];
+  const existing = entry.clubList.findIndex((item) => item.key === key);
+  const next = {
+    key,
+    id: player.clubId || club?.id || null,
+    name,
+    logoFile: logoFileForClub(club || { id: player.clubId, name: rawName }, clubs) ?? club?.logoFile ?? null,
+  };
+  if (existing >= 0) entry.clubList.splice(existing, 1);
+  entry.clubList.push(next);
+  const last = entry.clubList[entry.clubList.length - 1];
+  entry.clubId = last.id;
+  entry.clubName = entry.clubList.map((item) => item.name).filter(Boolean).join(' / ');
+  entry.themeClubName = last.name;
+  entry.logoFile = last.logoFile ?? entry.logoFile ?? null;
+}
+
 function collectRoster(grades, clubs) {
   const map = new Map();
   for (const grade of grades ?? []) {
@@ -47,37 +70,41 @@ function collectRoster(grades, clubs) {
       for (const game of round.games ?? []) {
         for (const player of game.players ?? []) {
           if (!player?.id) continue;
-          const current = map.get(player.id);
+          let current = map.get(player.id);
           if (!current) {
-            const club = clubs.find((item) => item.id === player.clubId);
-            map.set(player.id, {
+            current = {
               id: player.id,
               firstName: player.firstName,
               lastName: player.lastName,
               name: playerName(player),
               number: player.number || '',
-              clubId: player.clubId,
-              clubName: player.clubName || club?.name || '',
+              clubId: null,
+              clubName: '',
+              themeClubName: '',
               position: player.position || '',
               photoFile: player.photoFile ?? null,
-              logoFile: club?.logoFile ?? null,
+              logoFile: null,
               gradeIds: [grade.id],
               gradeNames: [grade.name],
-            });
-            continue;
+            };
+            map.set(player.id, current);
+          } else {
+            if (!current.gradeIds.includes(grade.id)) {
+              current.gradeIds.push(grade.id);
+              current.gradeNames.push(grade.name);
+            }
+            if (!current.photoFile && player.photoFile) current.photoFile = player.photoFile;
+            if (!current.number && player.number) current.number = player.number;
+            if (!current.position && player.position) current.position = player.position;
           }
-          if (!current.gradeIds.includes(grade.id)) {
-            current.gradeIds.push(grade.id);
-            current.gradeNames.push(grade.name);
-          }
-          if (!current.photoFile && player.photoFile) current.photoFile = player.photoFile;
-          if (!current.number && player.number) current.number = player.number;
-          if (!current.position && player.position) current.position = player.position;
+          rememberPlayedClub(current, player, clubs);
         }
       }
     }
   }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  return [...map.values()]
+    .map(({ clubList, ...player }) => player)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
 function decorateRoster(rows) {
@@ -89,14 +116,10 @@ function decorateRoster(rows) {
 }
 
 function totyView(store, roster, grades) {
-  const league = leagueGradeFrom(grades ?? store.grades);
+  const league = totyGradeFrom(grades ?? store.grades);
   const gradeId = league?.id ?? null;
   const all = normalizeToty(store.teamOfTheYear);
-  let picks = (gradeId && all[gradeId]) || emptyTotyPicks();
-  if (gradeId && !TOTY_POSITIONS.some((pos) => picks[pos.id])) {
-    const fallback = Object.values(all).find((entry) => TOTY_POSITIONS.some((pos) => entry[pos.id]));
-    if (fallback) picks = fallback;
-  }
+  const picks = (gradeId && all[gradeId]) || emptyTotyPicks();
   const leagueRoster = gradeId
     ? (roster ?? []).filter((player) => (player.gradeIds ?? []).includes(gradeId))
     : roster ?? [];
@@ -250,9 +273,20 @@ function splashWomenClubs(grades, clubs, logosDir) {
     .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }));
 }
 
+function splashGradesWithFinals(store, grades) {
+  const byId = new Map((store.grades ?? []).map((grade) => [String(grade.id), grade]));
+  return (grades ?? []).map((grade) => {
+    const source = byId.get(String(grade.id));
+    if (!source?.rounds?.length) return grade;
+    return { ...grade, rounds: source.rounds };
+  });
+}
+
 function splashView(store, grades, clubs, settings, logosDir) {
   const wwfl = store.competition === 'wwfl';
-  const splashGrades = (grades ?? []).filter((grade) => (wwfl ? isWomenGrade(grade) : !isWomenGrade(grade)));
+  const splashGrades = splashGradesWithFinals(store, grades).filter((grade) =>
+    wwfl ? isWomenGrade(grade) : !isWomenGrade(grade)
+  );
   const teams = wwfl ? splashWomenClubs(splashGrades, clubs, logosDir) : splashLeagueClubs(clubs, logosDir);
   let fixtures = collectGrandFinalFixtures(splashGrades)
     .filter((game) => isNamedSplashTeam(game.homeName) && isNamedSplashTeam(game.awayName))
@@ -428,6 +462,11 @@ function gradeBoardsView(store, clubs, settings, currentSlide, grades) {
     medalTitle: overlayMedalTitle(grade, settings),
     board: boardView(tallyGrade(grade, clubs, null, settings)),
   }));
+  if (store.scoreboard?.leaderboardScope === 'grade') {
+    const id = String(store.scoreboard?.gradeId || '');
+    const one = all.filter((item) => String(item.id) === id);
+    return one.length ? one : all.slice(0, 1);
+  }
   if (store.scoreboard?.leaderboardScope === 'current') {
     const id =
       currentSlide?.gradeId ||
@@ -643,7 +682,15 @@ export function decorateState(store, paths) {
 
   const slideIndex = Math.min(store.presentation?.slideIndex ?? 0, Math.max(0, slides.length - 1));
   const currentSlide = slides[slideIndex] ?? null;
-  const roster = decorateRoster(collectRoster(grades, clubs));
+  const roster = decorateRoster(
+    collectRoster(
+      grades.map((grade) => {
+        const source = (store.grades ?? []).find((item) => String(item.id) === String(grade.id));
+        return source ? { ...source, id: grade.id, name: grade.name } : grade;
+      }),
+      clubs
+    )
+  );
 
   return {
     season: store.season,
@@ -652,6 +699,10 @@ export function decorateState(store, paths) {
     activeGradeId: activeGrade?.id ?? null,
     selectedGameId: store.selectedGameId,
     grades,
+    gradeRoster: (store.grades ?? []).map((grade) => ({
+      id: String(grade.id),
+      women: isWomenGrade(grade),
+    })),
     clubs,
     leagueClubs: splashLeagueClubs(clubs, paths.logos),
     sponsors,

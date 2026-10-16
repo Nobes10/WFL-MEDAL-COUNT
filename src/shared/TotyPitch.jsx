@@ -50,7 +50,8 @@ function fitSpot(spot) {
   if (club) {
     club.style.fontSize = '';
     club.style.letterSpacing = '';
-    club.style.whiteSpace = 'nowrap';
+    club.style.whiteSpace = club.textContent?.includes('/') ? 'normal' : 'nowrap';
+    club.style.lineHeight = club.textContent?.includes('/') ? '1.05' : '';
   }
 
   const base = spot.getBoundingClientRect().width;

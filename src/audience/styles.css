@@ -101,13 +101,12 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 .club-side {
   flex: 1 1 0;
   min-width: 0;
-  max-width: 40%;
+  max-width: 46%;
   text-align: center;
 }
 .club-side img {
-  width: min(300px, 100%);
+  width: min(420px, 42vh, 100%);
   height: auto;
-  max-height: 32vh;
   aspect-ratio: 1;
   object-fit: contain;
 }
@@ -155,9 +154,8 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   gap: 80px;
 }
 .match-slide.is-forfeit .club-side img {
-  width: min(420px, 100%);
+  width: min(500px, 46vh, 100%);
   height: auto;
-  max-height: 36vh;
 }
 .match-slide.is-forfeit .club-side h2 { margin-top: 20px; font-size: 56px; }
 .match-slide.is-forfeit .vs em { font-size: 88px; }
@@ -1409,7 +1407,7 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--gf-n, 1), minmax(0, 1fr));
   gap: 0.9vw;
 }
 .splash-fixtures li {
@@ -1440,7 +1438,7 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   justify-items: stretch;
-  gap: 1.6vw;
+  gap: 0.8vw;
 }
 .splash-side {
   container-type: size;

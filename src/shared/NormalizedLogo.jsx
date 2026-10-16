@@ -116,33 +116,47 @@ function cropLogoToSquare(img, pad = 0.08) {
   const draw = out.getContext('2d');
   if (!draw) return null;
   const box = outSize * inner;
-  const scale = Math.min(box / sw, box / sh);
+  const scale = Math.max(box / sw, box / sh);
   const dw = sw * scale;
   const dh = sh * scale;
   draw.drawImage(img, sx, sy, sw, sh, (outSize - dw) / 2, (outSize - dh) / 2, dw, dh);
   return out.toDataURL('image/png');
 }
 
+const croppedCache = new Map();
+
 export function NormalizedLogo({ src, alt = '', pad = 0.08, className, crop = true }) {
   const [url, setUrl] = useState(src);
   useEffect(() => {
+    let cancel = false;
+    if (!src || !crop) {
+      setUrl(src);
+      return undefined;
+    }
+    const key = `${src}@${pad}`;
+    const cached = croppedCache.get(key);
+    if (cached) {
+      setUrl(cached);
+      return undefined;
+    }
     setUrl(src);
-  }, [src]);
-  return (
-    <img
-      src={url}
-      alt={alt}
-      className={className}
-      crossOrigin={url === src ? 'anonymous' : undefined}
-      onLoad={(event) => {
-        if (url !== src || !crop) return;
-        try {
-          const cropped = cropLogoToSquare(event.currentTarget, pad);
-          if (cropped) setUrl(cropped);
-        } catch {
-          /* keep original if canvas is blocked */
-        }
-      }}
-    />
-  );
+    (async () => {
+      try {
+        const response = await fetch(src);
+        if (!response.ok) return;
+        const bitmap = await createImageBitmap(await response.blob());
+        const cropped = cropLogoToSquare(bitmap, pad);
+        bitmap.close?.();
+        if (cancel || !cropped) return;
+        croppedCache.set(key, cropped);
+        setUrl(cropped);
+      } catch {
+        /* keep the original if the file cannot be read */
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [src, pad, crop]);
+  return <img src={url} alt={alt} className={className} />;
 }

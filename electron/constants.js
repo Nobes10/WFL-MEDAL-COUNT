@@ -47,6 +47,7 @@ export const MEDAL_TITLES = Object.fromEntries(
 
 export const CLUB_LOGO_OVERRIDES = {
   ROOPENA: 'override-roopena.png',
+  'NORTH WHYALLA': 'override-north-whyalla.png',
 };
 
 export const WOMEN_CLUB_LOGO_OVERRIDES = {
@@ -55,20 +56,6 @@ export const WOMEN_CLUB_LOGO_OVERRIDES = {
 
 export function looksLikeWomenClub(clubName) {
   return /\bwomens?\b/i.test(String(clubName || '')) || /\bnwfcw\b/i.test(String(clubName || ''));
-}
-
-export function mensNorthCrestFile(clubs = []) {
-  const junior = (clubs ?? []).find((item) => {
-    if (looksLikeWomenClub(item.name)) return false;
-    if (canonicalClubKey(item.name) !== 'NORTH WHYALLA') return false;
-    const name = String(item.name || '').trim();
-    return name !== name.toUpperCase();
-  });
-  if (junior?.id) return `${junior.id}.png`;
-  const any = (clubs ?? []).find(
-    (item) => !looksLikeWomenClub(item.name) && canonicalClubKey(item.name) === 'NORTH WHYALLA' && item.id
-  );
-  return any?.id ? `${any.id}.png` : null;
 }
 
 export function overrideLogoFileForClub(clubName, women = looksLikeWomenClub(clubName)) {
@@ -176,6 +163,10 @@ export function leagueGradeFrom(grades) {
   return list.find(isLeagueGrade) ?? list.find((grade) => String(grade.id) === '0') ?? null;
 }
 
+export function totyGradeFrom(grades) {
+  return leagueGradeFrom(grades) ?? (grades ?? []).find((grade) => isWomenGrade(grade)) ?? null;
+}
+
 export function sortGrades(grades) {
   return [...(grades ?? [])].sort(
     (a, b) =>
@@ -246,9 +237,6 @@ function usableLogoFile(club, fileName) {
 export function logoFileForClub(club, clubs = [], options = {}) {
   if (!club) return null;
   const women = options.women === true || (options.women !== false && looksLikeWomenClub(club.name));
-  if (!women && canonicalClubKey(club.name) === 'NORTH WHYALLA') {
-    return mensNorthCrestFile(clubs) || (club.id ? `${club.id}.png` : null);
-  }
   const override = overrideLogoFileForClub(club.name, women);
   if (override) return override;
   if (club.logoFile && String(club.logoFile).startsWith('site-')) return club.logoFile;
@@ -409,6 +397,7 @@ export const DEFAULT_SETTINGS = {
   showLeagueName: true,
   audienceFullscreen: true,
   audienceAlwaysOnTop: false,
+  presentTarget: 'display',
   refreshScoresOnLaunch: true,
   leaderboardSize: 8,
   liveVoteCount: 6,
@@ -428,6 +417,7 @@ export function mergeSettings(raw = {}) {
   next.leagueName = String(next.leagueName || DEFAULT_SETTINGS.leagueName).trim().slice(0, 80) || DEFAULT_SETTINGS.leagueName;
   next.leaderboardSize = Math.min(20, Math.max(3, Math.round(Number(next.leaderboardSize) || 8)));
   next.liveVoteCount = 6;
+  next.presentTarget = next.presentTarget === 'obs' ? 'obs' : 'display';
   next.medalTitles = { ...DEFAULT_SETTINGS.medalTitles, ...(incoming.medalTitles ?? {}) };
   next.gradeLabels = { ...DEFAULT_SETTINGS.gradeLabels, ...(incoming.gradeLabels ?? {}) };
   if (next.gradeLabels['A Grade Women'] === "Women's") {
@@ -702,10 +692,18 @@ export function isSplashRunsheetId(id) {
   return key === RUNSHEET_SPLASH || key.startsWith(`${RUNSHEET_SPLASH}-`);
 }
 
+export function leaderboardGradeId(raw) {
+  const direct = String(raw?.gradeId || '').trim();
+  if (direct) return direct;
+  const id = String(raw?.id || '');
+  return id.startsWith('leaderboard-') ? id.slice('leaderboard-'.length) : '';
+}
+
 export function buildPresentationQueue(items, grades) {
   const known = new Set((grades ?? []).map((grade) => String(grade.id)));
   const queue = [];
   for (const raw of items ?? []) {
+    const boardGradeId = leaderboardGradeId(raw);
     const type =
       raw?.type === 'splash' || isSplashRunsheetId(raw?.id)
         ? 'splash'
@@ -713,13 +711,20 @@ export function buildPresentationQueue(items, grades) {
           ? 'toty'
           : raw?.type === 'lifemembers' || raw?.id === RUNSHEET_LIFE
             ? 'lifemembers'
-            : 'grade';
+            : raw?.type === 'leaderboard' || boardGradeId
+              ? 'leaderboard'
+              : 'grade';
     if (type === 'splash') {
       queue.push({ type: 'splash', id: String(raw?.id || RUNSHEET_SPLASH) });
       continue;
     }
     if (type === 'toty' || type === 'lifemembers') {
       queue.push({ type });
+      continue;
+    }
+    if (type === 'leaderboard') {
+      if (!known.has(boardGradeId)) continue;
+      queue.push({ type: 'leaderboard', gradeId: boardGradeId });
       continue;
     }
     const id = String(raw?.id || raw?.gradeId || '');
@@ -742,6 +747,12 @@ export function normalizePresentationQueue(raw) {
     }
     if (item.type === 'toty' || item.type === 'lifemembers') {
       queue.push({ type: item.type });
+      continue;
+    }
+    if (item.type === 'leaderboard') {
+      const gradeId = leaderboardGradeId(item);
+      if (!gradeId) continue;
+      queue.push({ type: 'leaderboard', gradeId });
       continue;
     }
     if (item.type === 'preso' && Array.isArray(item.gradeIds) && item.gradeIds.length) {
@@ -767,6 +778,7 @@ export function runsheetIdForQueueItem(item, slideGradeId) {
   if (item.type === 'splash') return item.id || RUNSHEET_SPLASH;
   if (item.type === 'toty') return RUNSHEET_TOTY;
   if (item.type === 'lifemembers') return RUNSHEET_LIFE;
+  if (item.type === 'leaderboard' && item.gradeId) return `leaderboard-${item.gradeId}`;
   if (item.type === 'preso') {
     if (slideGradeId && item.gradeIds.includes(String(slideGradeId))) return String(slideGradeId);
     return item.gradeIds[0] ?? null;

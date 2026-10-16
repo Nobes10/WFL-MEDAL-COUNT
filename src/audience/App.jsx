@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NormalizedLogo } from '../shared/NormalizedLogo.jsx';
 import { TotyPitch } from '../shared/TotyPitch.jsx';
-import { VenuePin } from '../shared/VenuePin.jsx';
-
 const api = window.wflMedal;
 
 function Photo({ src, name }) {
@@ -161,7 +159,7 @@ function TotyLine({ picks, spots, reveal }) {
           clubLabel: [player?.clubName, player?.number ? `No. ${player.number}` : null].filter(Boolean).join(' · ') || spot.posName,
           photoUrl: player?.photoUrl || player?.logoUrl || null,
           logoUrl: player?.logoUrl || null,
-          themeClubName: player?.clubName,
+          themeClubName: player?.themeClubName || player?.clubName,
         };
         return (
           <div key={spot.spotId} className={`vote-col shown${index === shown - 1 ? ' just-in' : ''}`}>
@@ -259,7 +257,10 @@ function SplashStage({ state }) {
       )}
       <p className="splash-day">{splash.roundName || 'Grand Final'}</p>
       {fixtures.length ? (
-        <ul className={`splash-fixtures${fixtures.length === 1 ? ' solo' : ''}`}>
+        <ul
+          className={`splash-fixtures${fixtures.length === 1 ? ' solo' : ''}`}
+          style={{ '--gf-n': Math.max(fixtures.length, 1) }}
+        >
           {fixtures.map((game) => (
             <li key={game.id}>
               <em>{game.gradeName}</em>
@@ -269,7 +270,6 @@ function SplashStage({ state }) {
                 </span>
                 <span className="splash-v">
                   <em>v</em>
-                  <VenuePin name={game.venueName} />
                 </span>
                 <span className="splash-side">
                   {game.awayLogoUrl ? <NormalizedLogo src={game.awayLogoUrl} pad={0.04} /> : <i />}
@@ -610,7 +610,6 @@ export function AudienceApp() {
             <ClubSide logo={slide.homeLogoUrl} score={slide.forfeit ? null : slide.homeScoreLine} />
             <span className="vs">
               <em>v</em>
-              <VenuePin name={slide.venueName} />
             </span>
             <ClubSide logo={slide.awayLogoUrl} score={slide.forfeit ? null : slide.awayScoreLine} />
           </div>

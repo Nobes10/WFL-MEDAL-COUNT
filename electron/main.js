@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   protocol,
   net,
@@ -13,11 +14,12 @@ import { copyFileSync, existsSync, readdirSync, unlinkSync, writeFileSync } from
 import { basename, extname, join } from 'path';
 import { printDocument } from './print.js';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, TOTY_POSITIONS, TOTY_POSITION_IDS, leagueGradeFrom, clampTotyStep, clampLifeMemberStep, normalizeLifeMembers, TOTY_BEATS, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition } from './constants.js';
+import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, TOTY_POSITIONS, TOTY_POSITION_IDS, leagueGradeFrom, totyGradeFrom, clampTotyStep, clampLifeMemberStep, normalizeLifeMembers, TOTY_BEATS, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition } from './constants.js';
 import { playerName } from './tally.js';
 import { ensureStoreDirs, installClubLogoOverrides, loadStore, saveStore, storePaths } from './store.js';
 import { syncSeason, refreshFixtureScores, ensureWebsiteClubLogos, applyClubLogoFiles } from './sync.js';
 import { applyPresentationCursor, audienceFromState, decorateState } from './view.js';
+import { broadcastObs, startObsServer } from './obs.js';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -36,6 +38,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const isDev = Boolean(process.env.ELECTRON_DEV);
 let mainWindow = null;
 let audienceWindow = null;
+let obsPage = null;
 let store = null;
 let paths = null;
 
@@ -49,6 +52,14 @@ if (!gotLock) {
     mainWindow.show();
     mainWindow.focus();
   });
+}
+
+function totyStorageGradeId(requested) {
+  const grades = store?.grades ?? [];
+  const wanted = String(requested || '');
+  if (wanted && grades.some((grade) => String(grade.id) === wanted)) return wanted;
+  const pool = gradesForCompetition(grades, store?.competition);
+  return String(totyGradeFrom(pool)?.id || totyGradeFrom(grades)?.id || '');
 }
 
 function dataPath(kind, fileName) {
@@ -68,6 +79,7 @@ function ensureScoreboard() {
 function currentPresentationGradeId() {
   const queue = normalizePresentationQueue(store.presentation?.queue);
   const item = queue[store.presentation?.queueIndex ?? 0];
+  if (item?.type === 'leaderboard' && item.gradeId) return String(item.gradeId);
   if (item?.type === 'preso' && item.gradeIds?.[0]) return String(item.gradeIds[0]);
   return store.presentation?.gradeId || store.activeGradeId || store.scoreboard?.gradeId || null;
 }
@@ -93,7 +105,17 @@ function withWindowState(state) {
   return {
     ...state,
     audienceOpen: Boolean(audienceWindow && !audienceWindow.isDestroyed()),
+    obsUrl: obsPage?.url ?? null,
   };
+}
+
+function presentingToObs() {
+  return currentSettings().presentTarget === 'obs';
+}
+
+function ensurePresentOutput() {
+  if (presentingToObs()) return;
+  if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
 }
 
 let persistTimer = null;
@@ -140,6 +162,16 @@ function presentationCursorPatch(full) {
       current: full.lifeMembers?.current ?? null,
       totalSteps: full.lifeMembers?.totalSteps ?? 0,
     },
+    ...(full.audienceView === 'leaderboard'
+      ? {
+          scoreboard: {
+            gradeId: full.scoreboard?.gradeId ?? null,
+            gradeName: full.scoreboard?.gradeName ?? '',
+            medalTitle: full.scoreboard?.medalTitle ?? '',
+            leaderboardScope: full.scoreboard?.leaderboardScope ?? 'all',
+          },
+        }
+      : {}),
   };
 }
 
@@ -151,6 +183,7 @@ function emitState({ cheap = false } = {}) {
   lastSlideCount = full.presentation?.slides?.length ?? 0;
   const audience = audienceFromState(full);
   audienceWindow?.webContents.send('audience-update', audience);
+  broadcastObs(audience);
   if (cheap) {
     const patch = presentationCursorPatch(full);
     mainWindow?.webContents.send('state-cursor', patch);
@@ -197,6 +230,14 @@ function activateQueueItem(index, { atEnd = false } = {}) {
   if (item.type === 'lifemembers') {
     store.audienceView = 'lifemembers';
     store.lifeMemberStep = atEnd ? lifeMemberMaxStep() : 0;
+    return true;
+  }
+  if (item.type === 'leaderboard') {
+    ensureScoreboard();
+    store.audienceView = 'leaderboard';
+    store.scoreboard.gradeId = item.gradeId;
+    store.scoreboard.leaderboardScope = 'grade';
+    decoratedCache = null;
     return true;
   }
   store.audienceView = 'presentation';
@@ -432,6 +473,44 @@ app.whenReady().then(() => {
     return emitState();
   });
 
+  ipcMain.handle('add-game-player', (_event, gameId, payload) => {
+    const found = findGame(gameId);
+    if (!found || isForfeitGame(found.game)) return emitState();
+    const name = String(payload?.name || '').replace(/\s+/g, ' ').trim();
+    if (!name) return emitState();
+    const number = String(payload?.number || '').trim();
+    const away = String(payload?.clubId || '') === String(found.game.awayId);
+    const clubId = away ? found.game.awayId : found.game.homeId;
+    const clubName = away ? found.game.awayName : found.game.homeName;
+    const parts = name.split(' ');
+    const player = {
+      id: `manual-${randomUUID()}`,
+      firstName: parts.length > 1 ? parts.slice(0, -1).join(' ') : name,
+      lastName: parts.length > 1 ? parts[parts.length - 1] : '',
+      number,
+      clubId,
+      clubName,
+      manual: true,
+      captainRole: null,
+      position: null,
+      goals: 0,
+      behinds: 0,
+      photoFile: null,
+    };
+    const players = Array.isArray(found.game.players) ? found.game.players : [];
+    const already = players.some((item) => {
+      const existing = `${item.firstName || ''} ${item.lastName || ''}`.replace(/\s+/g, ' ').trim().toLowerCase();
+      return existing === name.toLowerCase() && String(item.clubId || '') === String(clubId || '');
+    });
+    if (!already) {
+      players.push(player);
+      players.sort((a, b) => Number(a.number || 999) - Number(b.number || 999));
+      found.game.players = players;
+      persist();
+    }
+    return emitState();
+  });
+
   ipcMain.handle('clear-votes', (_event, gameId) => {
     const found = findGame(gameId);
     if (found) found.game.votes = emptyVotes();
@@ -544,6 +623,22 @@ app.whenReady().then(() => {
     return emitState();
   });
 
+  ipcMain.handle('set-present-target', (_event, target) => {
+    store.settings = mergeSettings({
+      ...store.settings,
+      presentTarget: target === 'obs' ? 'obs' : 'display',
+    });
+    if (store.settings.presentTarget === 'obs') closeAudience();
+    else if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('copy-text', (_event, text) => {
+    clipboard.writeText(String(text || ''));
+    return true;
+  });
+
   ipcMain.handle('scoreboard-set-round', (_event, roundId) => {
     ensureScoreboard();
     store.scoreboard.gradeId = store.activeGradeId;
@@ -570,7 +665,7 @@ app.whenReady().then(() => {
     store.audienceView = 'scoreboard';
     store.scoreboard.gradeId = store.scoreboard.gradeId || store.activeGradeId;
     persist();
-    if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
     return emitState();
   });
 
@@ -582,7 +677,7 @@ app.whenReady().then(() => {
     else store.scoreboard.gradeId = store.scoreboard.gradeId || store.activeGradeId;
     store.scoreboard.leaderboardScope = scope === 'current' ? 'current' : 'all';
     persist();
-    if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
     return emitState();
   });
 
@@ -591,7 +686,7 @@ app.whenReady().then(() => {
     syncQueueToView('splash');
     stopScoreboardLive();
     persist();
-    if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
     return emitState();
   });
 
@@ -601,7 +696,7 @@ app.whenReady().then(() => {
     syncQueueToView('toty');
     stopScoreboardLive();
     persist();
-    if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
     return emitState();
   });
 
@@ -611,7 +706,7 @@ app.whenReady().then(() => {
     syncQueueToView('lifemembers');
     stopScoreboardLive();
     persist();
-    if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
     return emitState();
   });
 
@@ -628,7 +723,7 @@ app.whenReady().then(() => {
     syncQueueToView('presentation');
     stopScoreboardLive();
     persist();
-    if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
     return emitState();
   });
 
@@ -660,7 +755,7 @@ app.whenReady().then(() => {
       stopScoreboardLive();
     }
     persist();
-    if (!audienceWindow || audienceWindow.isDestroyed()) createAudienceWindow();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
     return emitState();
   });
 
@@ -676,6 +771,12 @@ app.whenReady().then(() => {
 
     if (store.audienceView === 'splash') {
       if (!stepRunsheet(amount)) store.audienceView = 'splash';
+      persistSoon();
+      return emitState({ cheap: Boolean(decoratedCache) });
+    }
+
+    if (store.audienceView === 'leaderboard' && store.scoreboard?.leaderboardScope === 'grade') {
+      stepRunsheet(amount);
       persistSoon();
       return emitState({ cheap: Boolean(decoratedCache) });
     }
@@ -800,8 +901,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('set-toty-player', (_event, gradeId, positionId, playerId) => {
-    const leagueId = leagueGradeFrom(store.grades)?.id;
-    const id = String(leagueId || gradeId || '');
+    const id = totyStorageGradeId(gradeId);
     const pos = String(positionId || '');
     if (!id || !TOTY_POSITION_IDS.has(pos)) return emitState();
     if (!store.teamOfTheYear || typeof store.teamOfTheYear !== 'object') store.teamOfTheYear = {};
@@ -931,6 +1031,10 @@ app.whenReady().then(() => {
     if (!member || !patch || typeof patch !== 'object') return emitState();
     if ('note' in patch) member.note = String(patch.note || '').trim();
     if ('year' in patch) member.year = String(patch.year || '').trim();
+    if ('name' in patch) {
+      const name = String(patch.name || '').trim();
+      if (name) member.name = name;
+    }
     persist();
     return emitState();
   });
@@ -965,9 +1069,27 @@ app.whenReady().then(() => {
     return emitState();
   });
 
+  ipcMain.handle('clear-entered-data', () => {
+    for (const grade of store.grades ?? []) {
+      for (const round of grade.rounds ?? []) {
+        for (const game of round.games ?? []) {
+          game.votes = emptyVotes();
+        }
+      }
+    }
+    store.teamOfTheYear = {};
+    store.totyStep = 0;
+    for (const member of normalizeLifeMembers(store.lifeMembers)) {
+      removeCustomLifeMemberPhoto(member.id);
+    }
+    store.lifeMembers = [];
+    store.lifeMemberStep = 0;
+    persist();
+    return emitState();
+  });
+
   ipcMain.handle('clear-toty', (_event, gradeId) => {
-    const leagueId = leagueGradeFrom(store.grades)?.id;
-    const id = String(leagueId || gradeId || '');
+    const id = totyStorageGradeId(gradeId);
     if (!id) return emitState();
     if (!store.teamOfTheYear || typeof store.teamOfTheYear !== 'object') store.teamOfTheYear = {};
     store.teamOfTheYear[id] = {};
@@ -1045,6 +1167,18 @@ app.whenReady().then(() => {
   });
 
   createMainWindow();
+  startObsServer({
+    distDir: join(__dirname, '../dist'),
+    mediaFile: dataPath,
+    getAudience: () => audienceFromState(currentDecorated()),
+  })
+    .then((page) => {
+      obsPage = page;
+      emitState();
+    })
+    .catch(() => {
+      obsPage = null;
+    });
   ensureWebsiteClubLogos(paths)
     .then(() => {
       applyClubLogoFiles(store.clubs, paths);
@@ -1053,7 +1187,7 @@ app.whenReady().then(() => {
     })
     .catch(() => {});
   if (currentSettings().refreshScoresOnLaunch) {
-    refreshFixtureScores(store)
+    refreshFixtureScores(store, null, paths)
       .then(() => {
         persist();
         emitState();
@@ -1064,6 +1198,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   persist();
+  obsPage?.close?.();
 });
 
 app.on('window-all-closed', () => {

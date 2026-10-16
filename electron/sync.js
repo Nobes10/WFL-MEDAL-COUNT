@@ -14,7 +14,6 @@ import {
   canonicalClubKey,
   wordpressClubLogoUrl,
   overrideLogoFileForClub,
-  mensNorthCrestFile,
   clubLogoSourceUrl,
   siteLogoFileName,
   looksLikeWomenClub,
@@ -49,6 +48,87 @@ function goalsOf(appearance) {
 function behindsOf(appearance) {
   const one = appearance.scoreSubTotal?.find((stat) => stat.type === '1_POINT_SCORE')?.value;
   return typeof one === 'number' ? one : 0;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function asList(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') return Object.values(value);
+  return [];
+}
+
+function isSheetPlayer(appearance) {
+  const role = String(appearance?.roleType || appearance?.role || '');
+  if (/coach|manager|staff|official|trainer|volunteer/i.test(role)) return false;
+  if (/player/i.test(role)) return true;
+  return Boolean(appearance?.firstName || appearance?.lastName || appearance?.playerNumber);
+}
+
+function keepManualPlayers(incoming, existing) {
+  const manual = (existing ?? []).filter((player) => player?.manual);
+  if (!manual.length) return incoming ?? [];
+  const seen = new Set((incoming ?? []).map((player) => String(player.id)));
+  return [...(incoming ?? []), ...manual.filter((player) => !seen.has(String(player.id)))];
+}
+
+function sheetStillMissing(game) {
+  const published = (game?.players ?? []).filter((player) => !player?.manual);
+  if (published.length) return false;
+  if (game?.forfeit) return false;
+  if (!game?.homeId || !game?.awayId) return false;
+  if (game.homeName === 'Home' || game.awayName === 'Away') return false;
+  return true;
+}
+
+function playersFromSummary(data, clubsById, prev) {
+  return asList(data?.appearances)
+    .filter(isSheetPlayer)
+    .map((appearance) => {
+      const club = clubsById.get(appearance.teamID);
+      return {
+        id: appearance.id,
+        firstName: appearance.firstName,
+        lastName: appearance.lastName,
+        number: appearance.playerNumber ? String(appearance.playerNumber) : '',
+        clubId: appearance.teamID,
+        clubName: club?.name ?? '',
+        captainRole: appearance.captainRole,
+        position: appearance.positionName || appearance.playerPosition || appearance.position || null,
+        goals: goalsOf(appearance),
+        behinds: behindsOf(appearance),
+        photoFile: previousPlayerPhoto(prev, appearance.id),
+      };
+    })
+    .sort((a, b) => Number(a.number || 999) - Number(b.number || 999));
+}
+
+async function fetchSheetPlayers(game, clubsById, prev, attempts = 3) {
+  let lastError = 'Team sheet not published yet';
+  const tries = Math.max(1, attempts);
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    try {
+      const match = await fetchJson(`${MATCHDAY_BASE}/get_match_data.php?id=${game.id}`);
+      const maId = match?.matchData?.maId;
+      if (!maId) {
+        lastError = 'Match centre has no id yet';
+      } else {
+        const summary = await fetchJson(
+          `${MATCHDAY_BASE}/get_match_summary_data.php?matchId=${maId}&userid=${WIDGET_USER_ID}&playHqId=${game.id}`
+        );
+        const players = playersFromSummary(summary?.matchSummary?.data, clubsById, prev);
+        if (players.length) return players;
+        if (game.forfeit || !game.homeId || !game.awayId) return [];
+        lastError = 'Team sheet not published yet';
+      }
+    } catch (error) {
+      lastError = String(error.message ?? error);
+    }
+    if (attempt < tries - 1) await wait(600 * (attempt + 1));
+  }
+  throw new Error(lastError);
 }
 
 async function downloadFile(url, destPath, { overwrite = false } = {}) {
@@ -87,15 +167,7 @@ export async function ensureWebsiteClubLogos(paths) {
 }
 
 export function applyClubLogoFiles(clubs, paths) {
-  const northCrest = mensNorthCrestFile(clubs);
   for (const club of clubs ?? []) {
-    if (!looksLikeWomenClub(club.name) && canonicalClubKey(club.name) === 'NORTH WHYALLA') {
-      const file = northCrest || (club.id ? `${club.id}.png` : null);
-      if (file && existsSync(join(paths.logos, file))) {
-        club.logoFile = file;
-        continue;
-      }
-    }
     const women = looksLikeWomenClub(club.name);
     const override = overrideLogoFileForClub(club.name, women);
     if (override && existsSync(join(paths.logos, override))) {
@@ -112,15 +184,14 @@ export function applyClubLogoFiles(clubs, paths) {
 
 async function ensureClubLogo(club, paths) {
   const women = looksLikeWomenClub(club.name);
-  const northMen = !women && canonicalClubKey(club.name) === 'NORTH WHYALLA';
-  const override = northMen ? null : overrideLogoFileForClub(club.name, women);
+  const override = overrideLogoFileForClub(club.name, women);
   if (override && existsSync(join(paths.logos, override))) {
     club.logoFile = override;
     return;
   }
   const siteName = siteLogoFileName(club.name);
   const source = clubLogoSourceUrl(club.name) || wordpressClubLogoUrl(club.name);
-  if (!northMen && siteName && source) {
+  if (siteName && source) {
     const dest = join(paths.logos, siteName);
     if (await downloadFile(source, dest, { overwrite: true })) {
       club.logoFile = siteName;
@@ -303,44 +374,47 @@ export async function syncSeason(store, paths, onProgress, gradeIndexes = null) 
   }
   applyClubLogoFiles(clubs, paths);
 
+  async function pullSheet(gradeId, game, attempts = 1) {
+    const prev = previousGames.get(`${gradeId}:${game.id}`);
+    try {
+      const players = await fetchSheetPlayers(game, clubsById, prev, attempts);
+      if (players.length) {
+        game.players = keepManualPlayers(players, game.players);
+        delete game.syncError;
+        await mapPool(game.players, 4, (player) => ensurePlayerPhoto(player, paths));
+        return;
+      }
+      if ((prev?.players ?? []).length) return;
+      if (sheetStillMissing(game)) game.syncError = 'Team sheet not published yet';
+    } catch (error) {
+      if ((prev?.players ?? []).length) return;
+      game.syncError = String(error.message ?? error);
+    }
+  }
+
   let done = 0;
   await mapPool(work, 3, async ({ gradeId, game }) => {
     done += 1;
     onProgress?.(`Team sheets ${done} of ${work.length}`, done, work.length);
-    try {
-      const match = await fetchJson(`${MATCHDAY_BASE}/get_match_data.php?id=${game.id}`);
-      const maId = match?.matchData?.maId;
-      if (!maId) return;
-      const summary = await fetchJson(
-        `${MATCHDAY_BASE}/get_match_summary_data.php?matchId=${maId}&userid=${WIDGET_USER_ID}&playHqId=${game.id}`
-      );
-      const data = summary?.matchSummary?.data;
-      if (!data?.appearances) return;
-      const prev = previousGames.get(`${gradeId}:${game.id}`);
-      game.players = data.appearances
-        .filter((appearance) => appearance.roleType === 'Player')
-        .map((appearance) => {
-          const club = clubsById.get(appearance.teamID);
-          return {
-            id: appearance.id,
-            firstName: appearance.firstName,
-            lastName: appearance.lastName,
-            number: appearance.playerNumber ? String(appearance.playerNumber) : '',
-            clubId: appearance.teamID,
-            clubName: club?.name ?? '',
-            captainRole: appearance.captainRole,
-            position: appearance.positionName || appearance.position || null,
-            goals: goalsOf(appearance),
-            behinds: behindsOf(appearance),
-            photoFile: previousPlayerPhoto(prev, appearance.id),
-          };
-        })
-        .sort((a, b) => Number(a.number || 999) - Number(b.number || 999));
-      await mapPool(game.players, 4, (player) => ensurePlayerPhoto(player, paths));
-    } catch (error) {
-      game.syncError = String(error.message ?? error);
-    }
+    await pullSheet(gradeId, game);
   });
+
+  const missed = [];
+  for (const grade of grades) {
+    for (const round of grade.rounds ?? []) {
+      for (const game of round.games ?? []) {
+        if (sheetStillMissing(game)) missed.push({ gradeId: grade.id, game });
+      }
+    }
+  }
+  if (missed.length) {
+    let retried = 0;
+    await mapPool(missed, 2, async ({ gradeId, game }) => {
+      retried += 1;
+      onProgress?.(`Retrying team sheets ${retried} of ${missed.length}`, retried, missed.length);
+      await pullSheet(gradeId, game, 3);
+    });
+  }
 
   store.grades = sortGrades(grades);
   store.clubs = [...clubsById.values()];
@@ -358,7 +432,7 @@ export async function syncSeason(store, paths, onProgress, gradeIndexes = null) 
   return store;
 }
 
-export async function refreshFixtureScores(store, gradeId = null) {
+export async function refreshFixtureScores(store, gradeId = null, paths = null) {
   const indexes = gradeId == null || gradeId === ''
     ? (store.grades ?? []).map((item) => Number(item.id)).filter((index) => Number.isInteger(index))
     : [Number(gradeId)].filter((index) => Number.isInteger(index));
@@ -387,6 +461,24 @@ export async function refreshFixtureScores(store, gradeId = null) {
         if (venueName) existing.venueName = venueName;
         applyFixtureScores(existing, game, home?.id, away?.id);
         Object.assign(existing, forfeitFields(home, away));
+      }
+    }
+    const clubsById = new Map((store.clubs ?? []).map((club) => [club.id, club]));
+    const missing = [];
+    for (const round of grade.rounds ?? []) {
+      for (const game of round.games ?? []) {
+        if (sheetStillMissing(game)) missing.push(game);
+      }
+    }
+    for (const game of missing) {
+      try {
+        const players = await fetchSheetPlayers(game, clubsById, game, 2);
+        if (!players.length) continue;
+        game.players = keepManualPlayers(players, game.players);
+        delete game.syncError;
+        if (paths) await mapPool(game.players, 4, (player) => ensurePlayerPhoto(player, paths));
+      } catch (error) {
+        game.syncError = String(error.message ?? error);
       }
     }
   }

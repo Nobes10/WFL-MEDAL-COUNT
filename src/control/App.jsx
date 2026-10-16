@@ -1,7 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { NormalizedLogo } from '../shared/NormalizedLogo.jsx';
-import { VenuePin } from '../shared/VenuePin.jsx';
-
 const TeamOfTheYear = lazy(() => import('./TeamOfTheYear.jsx').then((mod) => ({ default: mod.TeamOfTheYear })));
 const LifeMembers = lazy(() => import('./LifeMembers.jsx').then((mod) => ({ default: mod.LifeMembers })));
 
@@ -10,6 +8,7 @@ const api = window.wflMedal;
 const PRESO_STARTS_KEY = 'wfl-preso-start-rounds';
 const RUNSHEET_INCLUDE_KEY = 'wfl-runsheet-include';
 const RUNSHEET_ORDER_KEY = 'wfl-runsheet-order';
+const RUNSHEET_SCOPED_KEY = 'wfl-runsheet-scoped';
 const COMP_KEY = 'wfl-competition';
 const RUNSHEET_SPLASH = 'splash';
 const RUNSHEET_TOTY = 'toty';
@@ -24,13 +23,109 @@ function readPresoStarts() {
   }
 }
 
-function readRunsheetInclude() {
+function readJson(key, fallback) {
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(RUNSHEET_INCLUDE_KEY) || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    const raw = window.localStorage.getItem(key);
+    if (raw == null) return fallback;
+    return JSON.parse(raw);
   } catch {
-    return {};
+    return fallback;
   }
+}
+
+function readIdList(key) {
+  const parsed = readJson(key, []);
+  return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+}
+
+function readFlagMap(key) {
+  const parsed = readJson(key, {});
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+}
+
+function compBucket(competition) {
+  return competition === 'wwfl' ? 'wwfl' : 'wfl';
+}
+
+function runsheetOrderKey(competition) {
+  return `${RUNSHEET_ORDER_KEY}-${compBucket(competition)}`;
+}
+
+function runsheetIncludeKey(competition) {
+  return `${RUNSHEET_INCLUDE_KEY}-${compBucket(competition)}`;
+}
+
+function runsheetRowOwner(id, womenIds, menIds) {
+  const key = String(id);
+  if (key === RUNSHEET_SPLASH) return 'both';
+  if (key === RUNSHEET_TOTY || key === RUNSHEET_LIFE) return 'wfl';
+  if (key.startsWith(`${RUNSHEET_SPLASH}-before-`)) {
+    const gradeId = key.slice(`${RUNSHEET_SPLASH}-before-`.length);
+    if (womenIds.has(gradeId)) return 'wwfl';
+    if (menIds.has(gradeId)) return 'wfl';
+    return 'drop';
+  }
+  if (key.startsWith('leaderboard-')) {
+    const gradeId = key.slice('leaderboard-'.length);
+    if (womenIds.has(gradeId)) return 'wwfl';
+    if (menIds.has(gradeId)) return 'wfl';
+    return 'drop';
+  }
+  if (key.startsWith(`${RUNSHEET_SPLASH}-`)) return 'both';
+  if (womenIds.has(key)) return 'wwfl';
+  if (menIds.has(key)) return 'wfl';
+  return 'drop';
+}
+
+function splitLegacyRunsheet(order, include, roster) {
+  const womenIds = new Set((roster ?? []).filter((grade) => grade.women).map((grade) => String(grade.id)));
+  const menIds = new Set((roster ?? []).filter((grade) => !grade.women).map((grade) => String(grade.id)));
+  const nextOrder = { wfl: [], wwfl: [] };
+  for (const id of order ?? []) {
+    const owner = runsheetRowOwner(id, womenIds, menIds);
+    if (owner === 'both' || owner === 'wfl') nextOrder.wfl.push(id);
+    if (owner === 'both' || owner === 'wwfl') nextOrder.wwfl.push(id);
+  }
+  if (menIds.size && !nextOrder.wfl.some((id) => menIds.has(id))) nextOrder.wfl = [];
+  if (womenIds.size && !nextOrder.wwfl.some((id) => womenIds.has(id))) nextOrder.wwfl = [];
+  function flagsFor(ids) {
+    const out = {};
+    for (const id of ids) {
+      if (Object.prototype.hasOwnProperty.call(include ?? {}, id)) out[id] = include[id] !== false;
+    }
+    return out;
+  }
+  return {
+    ready: true,
+    order: nextOrder,
+    include: {
+      wfl: nextOrder.wfl.length ? flagsFor(nextOrder.wfl) : {},
+      wwfl: nextOrder.wwfl.length ? flagsFor(nextOrder.wwfl) : {},
+    },
+  };
+}
+
+function loadRunsheetState() {
+  if (window.localStorage.getItem(RUNSHEET_SCOPED_KEY) === '1') {
+    return {
+      ready: true,
+      order: {
+        wfl: readIdList(runsheetOrderKey('wfl')),
+        wwfl: readIdList(runsheetOrderKey('wwfl')),
+      },
+      include: {
+        wfl: readFlagMap(runsheetIncludeKey('wfl')),
+        wwfl: readFlagMap(runsheetIncludeKey('wwfl')),
+      },
+    };
+  }
+  return {
+    ready: false,
+    order: { wfl: [], wwfl: [] },
+    include: { wfl: {}, wwfl: {} },
+    legacyOrder: readIdList(RUNSHEET_ORDER_KEY),
+    legacyInclude: readFlagMap(RUNSHEET_INCLUDE_KEY),
+  };
 }
 
 function readCompetition() {
@@ -52,15 +147,6 @@ function gradesForComp(grades, comp) {
   return (grades ?? []).filter((grade) => (comp === 'wwfl' ? isWomenGrade(grade) : !isWomenGrade(grade)));
 }
 
-function readRunsheetOrder() {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(RUNSHEET_ORDER_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
-  } catch {
-    return [];
-  }
-}
-
 function isSplashRowId(id) {
   const key = String(id || '');
   return key === RUNSHEET_SPLASH || key.startsWith(`${RUNSHEET_SPLASH}-`);
@@ -74,15 +160,35 @@ function preSplashId(gradeId) {
   return `${RUNSHEET_SPLASH}-before-${gradeId}`;
 }
 
+function leaderboardRowId(gradeId) {
+  return `leaderboard-${gradeId}`;
+}
+
 function defaultRunsheetRows(decks) {
   const rows = [{ type: 'splash', id: RUNSHEET_SPLASH }];
   (decks ?? []).forEach((item, index) => {
     if (index > 0) rows.push({ type: 'splash', id: preSplashId(item.id) });
     rows.push({ type: 'grade', id: item.id });
+    rows.push({ type: 'leaderboard', id: leaderboardRowId(item.id), gradeId: String(item.id) });
   });
   rows.push({ type: 'toty', id: RUNSHEET_TOTY });
   rows.push({ type: 'lifemembers', id: RUNSHEET_LIFE });
   return rows;
+}
+
+function runsheetRowForComp(row, competition, grades) {
+  if (row.type === 'grade' || row.type === 'leaderboard') {
+    const gradeId = row.type === 'leaderboard' ? row.gradeId : row.id;
+    const item = (grades ?? []).find((gradeItem) => String(gradeItem.id) === String(gradeId));
+    return gradesForComp([item].filter(Boolean), competition).length > 0;
+  }
+  if (row.type === 'toty' || row.type === 'lifemembers') return true;
+  if (row.type === 'splash' && String(row.id).startsWith(`${RUNSHEET_SPLASH}-before-`)) {
+    const gradeId = String(row.id).slice(`${RUNSHEET_SPLASH}-before-`.length);
+    const item = (grades ?? []).find((gradeItem) => String(gradeItem.id) === gradeId);
+    return gradesForComp([item].filter(Boolean), competition).length > 0;
+  }
+  return true;
 }
 
 function splashIntroduces(row, rows, state) {
@@ -101,7 +207,9 @@ function runsheetRowInfo(row, rows, state) {
   const deck =
     row.type === 'grade'
       ? (state.presentation.decks ?? state.grades ?? []).find((item) => item.id === row.id)
-      : null;
+      : row.type === 'leaderboard'
+        ? (state.presentation.decks ?? state.grades ?? []).find((item) => String(item.id) === String(row.gradeId))
+        : null;
   const intro = row.type === 'splash' ? splashIntroduces(row, rows, state) : null;
   const roundHint = deck
     ? deck.firstRound != null && deck.lastRound != null
@@ -119,7 +227,9 @@ function runsheetRowInfo(row, rows, state) {
         : splashCount > 1 && row.id !== RUNSHEET_SPLASH
           ? `Splash ${splashNumber}`
           : 'Opening splash'
-      : row.type === 'toty'
+      : row.type === 'leaderboard'
+        ? `Leaderboard · ${deck?.name || 'Grade'}`
+        : row.type === 'toty'
           ? 'Team of the year'
           : row.type === 'lifemembers'
             ? 'Life members'
@@ -132,7 +242,11 @@ function runsheetRowInfo(row, rows, state) {
       ? intro && row.id !== RUNSHEET_SPLASH
         ? `Before ${intro.medalTitle || intro.name}`
         : clubHint
-      : row.type === 'toty'
+      : row.type === 'leaderboard'
+        ? deck?.medalTitle
+          ? `Full tally · ${deck.medalTitle}`
+          : 'Full tally for this grade'
+        : row.type === 'toty'
           ? 'Lines one at a time, then the field'
           : row.type === 'lifemembers'
           ? (state.lifeMembers?.members ?? []).length
@@ -168,6 +282,14 @@ function orderRunsheetRows(decks, savedOrder) {
       byId.delete(String(row.id));
       continue;
     }
+    if (row.type === 'leaderboard') {
+      const gradeIndex = ordered.findIndex((item) => item.type === 'grade' && String(item.id) === String(row.gradeId));
+      if (gradeIndex >= 0) {
+        ordered.splice(gradeIndex + 1, 0, row);
+        byId.delete(String(row.id));
+        continue;
+      }
+    }
     ordered.push(row);
     byId.delete(String(row.id));
   }
@@ -175,7 +297,8 @@ function orderRunsheetRows(decks, savedOrder) {
 }
 
 function isTypingTarget(event) {
-  const el = event.target;
+  const el = event.target?.closest?.('input, textarea, select, [contenteditable="true"]')
+    || document.activeElement;
   if (!el) return false;
   const tag = String(el.tagName || '').toLowerCase();
   return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable;
@@ -208,7 +331,7 @@ function homeGradeMark(tone) {
   return 'L';
 }
 
-function ControlHome({ state, grades, competition, onEnterVotes, onShowNight, onOpenGrade }) {
+function ControlHome({ state, grades, competition, onEnterVotes, onShowNight, onOpenToty, onOpenLife, onOpenGrade }) {
   return (
     <div className="control-home">
       <div className="control-home-hero">
@@ -228,9 +351,19 @@ function ControlHome({ state, grades, competition, onEnterVotes, onShowNight, on
           {state.sync?.running ? 'Syncing…' : 'Sync from website'}
         </button>
       </div>
-      <div className="control-home-grades">
-        {grades.length ? (
-          grades.map((item) => {
+      {!grades.length ? (
+        <p className="muted">
+          {competition === 'wwfl'
+            ? 'Sync from the website to load WWFL fixtures.'
+            : 'Sync from the website to load WFL fixtures.'}
+        </p>
+      ) : null}
+      <div className="control-home-board">
+        <div
+          className="control-home-grades"
+          style={{ '--grade-count': Math.max(grades.length, 1) }}
+        >
+          {grades.map((item) => {
             const done = item.progress?.done ?? 0;
             const total = item.progress?.total ?? 0;
             const complete = total > 0 && done >= total;
@@ -247,24 +380,55 @@ function ControlHome({ state, grades, competition, onEnterVotes, onShowNight, on
                 <span className="home-grade-shine" aria-hidden="true" />
                 <span className="home-grade-medal" aria-hidden="true">{homeGradeMark(tone)}</span>
                 <small>{item.name}</small>
-                <strong>{item.medalTitle || item.name}</strong>
-                <span className="home-grade-bar" aria-hidden="true">
-                  <span style={{ width: `${pct}%` }} />
+                <span className="home-grade-foot">
+                  <strong>{item.medalTitle || item.name}</strong>
+                  <span className="home-grade-bar" aria-hidden="true">
+                    <span style={{ width: `${pct}%` }} />
+                  </span>
+                  <em>
+                    {done}/{total} games
+                    {complete ? <span className="home-grade-ready">Complete</span> : null}
+                  </em>
                 </span>
-                <em>
-                  {done}/{total} games
-                  {complete ? <span className="home-grade-ready">Complete</span> : null}
-                </em>
               </button>
             );
-          })
-        ) : (
-          <p className="muted">
-            {competition === 'wwfl'
-              ? 'Sync from the website to load WWFL fixtures.'
-              : 'Sync from the website to load WFL fixtures.'}
-          </p>
-        )}
+          })}
+        </div>
+        <div className="control-home-extras">
+        <button type="button" className="home-grade" data-tone="toty" onClick={onOpenToty}>
+          <span className="home-grade-shine" aria-hidden="true" />
+          <span className="home-grade-medal" aria-hidden="true">TY</span>
+          <small>Team</small>
+          <span className="home-grade-foot">
+            <strong>Team of the year</strong>
+            <span className="home-grade-bar" aria-hidden="true">
+              <span
+                style={{
+                  width: `${state.toty?.total ? Math.min(100, Math.round(((state.toty.filled ?? 0) / state.toty.total) * 100)) : 0}%`,
+                }}
+              />
+            </span>
+            <em>
+              {state.toty?.filled ?? 0}/{state.toty?.total ?? 22} selected
+            </em>
+          </span>
+        </button>
+        <button type="button" className="home-grade" data-tone="life" onClick={onOpenLife}>
+          <span className="home-grade-shine" aria-hidden="true" />
+          <span className="home-grade-medal" aria-hidden="true">LM</span>
+          <small>Honour</small>
+          <span className="home-grade-foot">
+            <strong>Life members</strong>
+            <span className="home-grade-bar" aria-hidden="true">
+              <span style={{ width: (state.lifeMembers?.members ?? []).length ? '100%' : '0%' }} />
+            </span>
+            <em>
+              {(state.lifeMembers?.members ?? []).length}{' '}
+              {(state.lifeMembers?.members ?? []).length === 1 ? 'recipient' : 'recipients'}
+            </em>
+          </span>
+        </button>
+        </div>
       </div>
     </div>
   );
@@ -288,12 +452,13 @@ export function App() {
   const [state, setState] = useState(null);
   const [tab, setTab] = useState('home');
   const [query, setQuery] = useState('');
+  const [addNumber, setAddNumber] = useState('');
+  const [addClubId, setAddClubId] = useState('');
   const [printJob, setPrintJob] = useState(null);
   const [announcerOpen, setAnnouncerOpen] = useState(false);
   const [announcerIds, setAnnouncerIds] = useState([]);
   const [presoStarts, setPresoStarts] = useState(readPresoStarts);
-  const [runsheetInclude, setRunsheetInclude] = useState(readRunsheetInclude);
-  const [runsheetOrder, setRunsheetOrder] = useState(readRunsheetOrder);
+  const [runsheetByComp, setRunsheetByComp] = useState(loadRunsheetState);
   const [runsheetDrag, setRunsheetDrag] = useState(null);
   const [competition, setCompetition] = useState(readCompetition);
   const runsheetDragHandle = useRef(false);
@@ -358,6 +523,7 @@ export function App() {
           lifeMembers: patch.lifeMembers
             ? { ...current.lifeMembers, ...patch.lifeMembers }
             : current.lifeMembers,
+          scoreboard: patch.scoreboard ? { ...current.scoreboard, ...patch.scoreboard } : current.scoreboard,
         };
       });
     });
@@ -376,20 +542,26 @@ export function App() {
   }, [presoStarts]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(RUNSHEET_INCLUDE_KEY, JSON.stringify(runsheetInclude));
-    } catch {
-      /* ignore quota / private mode */
-    }
-  }, [runsheetInclude]);
+    if (runsheetByComp.ready) return;
+    const roster = state?.gradeRoster;
+    if (!roster?.length) return;
+    setRunsheetByComp(splitLegacyRunsheet(runsheetByComp.legacyOrder, runsheetByComp.legacyInclude, roster));
+  }, [state?.gradeRoster, runsheetByComp.ready, runsheetByComp.legacyOrder, runsheetByComp.legacyInclude]);
 
   useEffect(() => {
+    if (!runsheetByComp.ready) return;
     try {
-      window.localStorage.setItem(RUNSHEET_ORDER_KEY, JSON.stringify(runsheetOrder));
+      window.localStorage.setItem(runsheetOrderKey('wfl'), JSON.stringify(runsheetByComp.order?.wfl ?? []));
+      window.localStorage.setItem(runsheetOrderKey('wwfl'), JSON.stringify(runsheetByComp.order?.wwfl ?? []));
+      window.localStorage.setItem(runsheetIncludeKey('wfl'), JSON.stringify(runsheetByComp.include?.wfl ?? {}));
+      window.localStorage.setItem(runsheetIncludeKey('wwfl'), JSON.stringify(runsheetByComp.include?.wwfl ?? {}));
+      window.localStorage.setItem(RUNSHEET_SCOPED_KEY, '1');
+      window.localStorage.removeItem(RUNSHEET_ORDER_KEY);
+      window.localStorage.removeItem(RUNSHEET_INCLUDE_KEY);
     } catch {
       /* ignore quota / private mode */
     }
-  }, [runsheetOrder]);
+  }, [runsheetByComp]);
 
   useEffect(() => {
     try {
@@ -479,9 +651,6 @@ export function App() {
     api.setActiveGrade(visibleGrades[0].id);
   }, [competition, state?.activeGradeId, visibleGradeIds]);
 
-  useEffect(() => {
-    if (competition === 'wwfl' && (tab === 'toty' || tab === 'lifemembers')) setTab('home');
-  }, [competition, tab]);
   const games = useMemo(
     () => (grade?.rounds ?? []).flatMap((round) => round.games.map((game) => ({ ...game, roundName: round.name, roundId: round.id }))),
     [grade]
@@ -490,6 +659,8 @@ export function App() {
 
   useEffect(() => {
     setQuery('');
+    setAddNumber('');
+    setAddClubId('');
   }, [selected?.id]);
 
   if (!state) {
@@ -509,6 +680,40 @@ export function App() {
     api.assignVote(selected.id, playerId);
   }
 
+  const runsheetComp = compBucket(competition);
+  const runsheetOrder = runsheetByComp.order?.[runsheetComp] ?? [];
+  const runsheetInclude = runsheetByComp.include?.[runsheetComp] ?? {};
+
+  function setRunsheetOrder(updater) {
+    setRunsheetByComp((current) => {
+      const base = current.ready
+        ? current
+        : splitLegacyRunsheet(current.legacyOrder, current.legacyInclude, state?.gradeRoster ?? []);
+      const prev = base.order?.[runsheetComp] ?? [];
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      return {
+        ...base,
+        ready: true,
+        order: { ...base.order, [runsheetComp]: next },
+      };
+    });
+  }
+
+  function setRunsheetInclude(updater) {
+    setRunsheetByComp((current) => {
+      const base = current.ready
+        ? current
+        : splitLegacyRunsheet(current.legacyOrder, current.legacyInclude, state?.gradeRoster ?? []);
+      const prev = base.include?.[runsheetComp] ?? {};
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      return {
+        ...base,
+        ready: true,
+        include: { ...base.include, [runsheetComp]: next },
+      };
+    });
+  }
+
   function runsheetIncluded(id) {
     return runsheetInclude[id] !== false;
   }
@@ -519,7 +724,7 @@ export function App() {
 
   function moveRunsheetTo(fromId, toId) {
     if (!fromId || !toId || fromId === toId) return;
-    const decks = state.presentation.decks ?? state.grades ?? [];
+    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
     setRunsheetOrder((current) => {
       const ids = orderRunsheetRows(decks, current).map((row) => row.id);
       const from = ids.indexOf(fromId);
@@ -541,7 +746,7 @@ export function App() {
   }
 
   function addSplash() {
-    const decks = state.presentation.decks ?? state.grades ?? [];
+    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
     const id = newSplashId();
     setRunsheetOrder((current) => {
       const ids = orderRunsheetRows(decks, current).map((row) => row.id);
@@ -556,8 +761,8 @@ export function App() {
   }
 
   function removeSplash(id) {
-    if (!isSplashRowId(id)) return;
-    const decks = state.presentation.decks ?? state.grades ?? [];
+    if (!isSplashRowId(id) || id === RUNSHEET_SPLASH) return;
+    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
     setRunsheetOrder((current) => orderRunsheetRows(decks, current).map((row) => row.id).filter((rowId) => rowId !== id));
     setRunsheetInclude((current) => {
       const next = { ...current };
@@ -567,22 +772,17 @@ export function App() {
   }
 
   function createNightRunsheet() {
-    const decks = state.presentation.decks ?? state.grades ?? [];
+    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
     const rows = defaultRunsheetRows(decks);
     setRunsheetOrder(rows.map((row) => row.id));
     setRunsheetInclude(Object.fromEntries(rows.map((row) => [row.id, true])));
   }
 
   function startRunsheet(fromId) {
-    const decks = state.presentation.decks ?? state.grades ?? [];
-    const rows = orderRunsheetRows(decks, runsheetOrder).filter((row) => {
-      if (row.type === 'grade') {
-        const item = (state.grades ?? []).find((gradeItem) => gradeItem.id === row.id);
-        return gradesForComp([item].filter(Boolean), competition).length > 0;
-      }
-      if (row.type === 'toty' || row.type === 'lifemembers') return competition === 'wfl';
-      return true;
-    });
+    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
+    const rows = orderRunsheetRows(decks, runsheetOrder).filter((row) =>
+      runsheetRowForComp(row, competition, state.grades)
+    );
     const startAt = fromId ? rows.findIndex((row) => row.id === fromId) : 0;
     const items = rows.slice(Math.max(0, startAt)).filter((row) => runsheetIncluded(row.id)).map((row) => ({
       type: row.type,
@@ -603,7 +803,7 @@ export function App() {
           {state.wflLogoUrl ? <img src={state.wflLogoUrl} alt="WFL" /> : null}
           <div>
             <strong>{competition === 'wwfl' ? 'WWFL Medal Count' : 'WFL Medal Count'}</strong>
-            <span>{state.season} · enter 3-2-1 before the night</span>
+            <span>{state.season}</span>
           </div>
           <label className="comp-switch">
             <span className="muted">Competition</span>
@@ -617,47 +817,32 @@ export function App() {
           </label>
         </div>
         <div className="top-actions">
-          <span className="muted">{state.sync?.running ? state.sync.message : `Last sync: ${formatWhen(state.lastSyncedAt)}`}</span>
           <button disabled={state.sync?.running} onClick={() => api.syncSeason()}>
             {state.sync?.running ? 'Syncing…' : 'Sync from website'}
           </button>
-          <button className="primary" onClick={() => api.toggleAudience()}>
-            {state.audienceOpen ? 'Close audience' : 'Audience display'}
-          </button>
+          {state.settings?.presentTarget === 'obs' ? (
+            <button
+              className="primary"
+              onClick={() => state.obsUrl && api.copyText(state.obsUrl)}
+            >
+              Copy OBS address
+            </button>
+          ) : (
+            <button className="primary" onClick={() => api.toggleAudience()}>
+              {state.audienceOpen ? 'Close audience' : 'Audience display'}
+            </button>
+          )}
           <button
-            className={tab === 'home' ? 'active' : ''}
-            onClick={() => setTab('home')}
+            className="danger"
+            onClick={() => {
+              const ok = window.confirm(
+                'Clear all votes, team of the year, and life members? Fixtures and settings stay.'
+              );
+              if (ok) api.clearEnteredData();
+            }}
           >
-            Home
+            Clear data
           </button>
-          <button
-            className={state.audienceOpen && state.audienceView === 'presentation' ? 'active' : ''}
-            onClick={() => api.showPresentation()}
-          >
-            Medal count
-          </button>
-          <button
-            className={state.audienceOpen && state.audienceView === 'splash' ? 'active' : ''}
-            onClick={() => api.showSplash()}
-          >
-            Opening splash
-          </button>
-          {competition === 'wfl' ? (
-            <>
-              <button
-                className={state.audienceOpen && state.audienceView === 'toty' ? 'active' : ''}
-                onClick={() => api.showToty()}
-              >
-                Team of the year
-              </button>
-              <button
-                className={state.audienceOpen && state.audienceView === 'lifemembers' ? 'active' : ''}
-                onClick={() => api.showLifeMembers()}
-              >
-                Life members
-              </button>
-            </>
-          ) : null}
         </div>
       </header>
 
@@ -665,12 +850,6 @@ export function App() {
         {[
           ['home', 'Home'],
           ['votes', 'Enter votes'],
-          ...(competition === 'wfl'
-            ? [
-                ['toty', 'Team of the year'],
-                ['lifemembers', 'Life members'],
-              ]
-            : []),
           ['board', 'Leaderboard'],
           ['show', 'Presentation'],
           ['sponsors', 'Sponsors'],
@@ -736,7 +915,6 @@ export function App() {
                         <ClubMark src={game.homeLogoUrl} name={game.homeName} />
                         <span className="game-vs">
                           <em>v</em>
-                          <VenuePin name={game.venueName} />
                         </span>
                         <ClubMark src={game.awayLogoUrl} name={game.awayName} />
                       </span>
@@ -818,7 +996,53 @@ export function App() {
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
                         placeholder="Search player or number"
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' || filteredPlayers.length || !query.trim()) return;
+                          event.preventDefault();
+                          api.addGamePlayer(selected.id, {
+                            name: query.trim(),
+                            number: addNumber.trim(),
+                            clubId: addClubId || selected.homeId,
+                          });
+                          setQuery('');
+                          setAddNumber('');
+                        }}
                       />
+                      {!filteredPlayers.length && query.trim() ? (
+                        <>
+                          <input
+                            className="player-number"
+                            value={addNumber}
+                            onChange={(event) => setAddNumber(event.target.value)}
+                            placeholder="No."
+                            inputMode="numeric"
+                            aria-label="Jumper number"
+                          />
+                          <select
+                            value={addClubId || selected.homeId || ''}
+                            onChange={(event) => setAddClubId(event.target.value)}
+                            aria-label="Club"
+                          >
+                            <option value={selected.homeId || ''}>{selected.homeName}</option>
+                            <option value={selected.awayId || ''}>{selected.awayName}</option>
+                          </select>
+                          <button
+                            type="button"
+                            className="primary"
+                            onClick={() => {
+                              api.addGamePlayer(selected.id, {
+                                name: query.trim(),
+                                number: addNumber.trim(),
+                                clubId: addClubId || selected.homeId,
+                              });
+                              setQuery('');
+                              setAddNumber('');
+                            }}
+                          >
+                            Add
+                          </button>
+                        </>
+                      ) : null}
                       <span className="muted">
                         {nextPick
                           ? `Click a player for ${nextPick}. Click a voted player to remove.`
@@ -859,6 +1083,8 @@ export function App() {
           competition={competition}
           onEnterVotes={() => setTab('votes')}
           onShowNight={() => setTab('show')}
+          onOpenToty={() => setTab('toty')}
+          onOpenLife={() => setTab('lifemembers')}
           onOpenGrade={(gradeId) => {
             api.setActiveGrade(gradeId);
             setTab('votes');
@@ -923,24 +1149,25 @@ export function App() {
       )}
 
       {tab === 'show' && (() => {
-        const allRows = orderRunsheetRows(state.presentation.decks ?? state.grades ?? [], runsheetOrder).filter((row) => {
-          if (row.type === 'grade') {
-            const item = (state.grades ?? []).find((gradeItem) => gradeItem.id === row.id);
-            return gradesForComp([item].filter(Boolean), competition).length > 0;
-          }
-          if (row.type === 'toty' || row.type === 'lifemembers') return competition === 'wfl';
-          return true;
-        });
+        const allRows = orderRunsheetRows(
+          gradesForComp(state.presentation.decks ?? state.grades ?? [], competition),
+          runsheetOrder
+        ).filter((row) =>
+          runsheetRowForComp(row, competition, state.grades)
+        );
         const activeRows = allRows.filter((row) => runsheetIncluded(row.id));
         const unusedRows = allRows.filter((row) => !runsheetIncluded(row.id));
         const dragOver = runsheetDrag?.overId;
         const renderRow = (row, list, unused) => {
           const info = runsheetRowInfo(row, list, state);
           const current = !unused && state.presentation.runCurrent === row.id;
+          const rowIndex = list.findIndex((item) => item.id === row.id);
+          const next = rowIndex >= 0 ? list[rowIndex + 1] : null;
+          const hasBoard = !unused && row.type === 'grade' && next?.type === 'leaderboard';
           return (
             <li
               key={row.id}
-              className={`${current ? 'active' : ''}${dragOver === row.id ? ' drop' : ''}${runsheetDrag?.id === row.id ? ' dragging' : ''}${unused ? ' unused-row' : ''}${info.isGrade && !unused ? ' grade-row' : ''}`.trim()}
+              className={`${current ? 'active' : ''}${dragOver === row.id ? ' drop' : ''}${runsheetDrag?.id === row.id ? ' dragging' : ''}${unused ? ' unused-row' : ''}${info.isGrade && !unused ? ' grade-row' : ''}${hasBoard ? ' has-board' : ''}${!unused && row.type === 'leaderboard' ? ' board-row' : ''}`.trim()}
               draggable
               onDragStart={(event) => {
                 if (!runsheetDragHandle.current) {
@@ -1032,6 +1259,8 @@ export function App() {
         const liveStatus =
           state.audienceView === 'splash'
             ? `Opening splash · ${state.splash?.roundName || 'Grand Final'}`
+            : state.audienceView === 'leaderboard' && state.scoreboard?.leaderboardScope === 'grade'
+              ? `Leaderboard · ${state.scoreboard?.medalTitle || state.scoreboard?.gradeName || 'Grade'}`
             : state.audienceView === 'toty'
               ? state.toty?.beat?.lineLabel
                 ? `Team of the year · ${state.toty.beat.lineLabel}`
@@ -1058,41 +1287,11 @@ export function App() {
               Next
             </button>
             <p className="show-status">{liveStatus}</p>
-            <div className="show-toolbar-actions">
-              <button type="button" onClick={createNightRunsheet}>
-                Create runsheet
-              </button>
-              <button
-                type="button"
-                disabled={!activeRows.length}
-                onClick={() => setPrintJob(printJobForRunsheet(activeRows, state, presoStarts))}
-              >
-                Print
-              </button>
-              <button
-                type="button"
-                disabled={!activeRows.length}
-                onClick={() =>
-                  setPrintJob({
-                    ...printJobForRunsheet(activeRows, state, presoStarts),
-                    action: 'save',
-                    fileName: runsheetFileName(state.season),
-                  })
-                }
-              >
-                Save
-              </button>
-              <button type="button" onClick={addSplash}>
-                Add splash
-              </button>
-              <button type="button" className="ghost" onClick={() => setRunsheetOrder([])}>
-                Reset order
-              </button>
-            </div>
           </header>
-          <div className="show-body">
+          <div className="show-layout">
             <section className="show-night">
               <h3 className="runsheet-heading">On the night</h3>
+              <p className="muted show-note">Each grade is followed by its leaderboard. Next walks this list.</p>
               <ul
                 className="show-presos"
                 onDragOver={(event) => {
@@ -1110,10 +1309,44 @@ export function App() {
                 )}
               </ul>
             </section>
-            <aside className="show-side">
+            <aside className="show-rail">
               <section>
                 <h3 className="runsheet-heading">Audience</h3>
-                <div className="show-switch">
+                <div className="present-target">
+                  <button
+                    type="button"
+                    className={state.settings?.presentTarget !== 'obs' ? 'primary' : ''}
+                    onClick={() => api.setPresentTarget('display')}
+                  >
+                    Second display
+                  </button>
+                  <button
+                    type="button"
+                    className={state.settings?.presentTarget === 'obs' ? 'primary' : ''}
+                    onClick={() => api.setPresentTarget('obs')}
+                  >
+                    OBS
+                  </button>
+                </div>
+                {state.settings?.presentTarget === 'obs' ? (
+                  <div className="obs-box">
+                    <p className="muted">
+                      In OBS add a Browser source with this address. Set it to 1920 × 1080, and leave Shutdown source when not visible unticked.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={!state.obsUrl}
+                      onClick={() => state.obsUrl && api.copyText(state.obsUrl)}
+                    >
+                      {state.obsUrl || 'Starting the OBS page…'}
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => api.toggleAudience()}>
+                    {state.audienceOpen ? 'Close second display' : 'Open second display'}
+                  </button>
+                )}
+                <div className="show-audience">
                   <button
                     className={state.audienceView === 'presentation' ? 'primary' : ''}
                     onClick={() => api.showPresentation()}
@@ -1126,31 +1359,24 @@ export function App() {
                   >
                     Opening splash
                   </button>
-                  {competition === 'wfl' ? (
-                    <>
-                      <button
-                        className={state.audienceView === 'toty' ? 'primary' : ''}
-                        onClick={() => api.showToty()}
-                      >
-                        Team of the year
-                      </button>
-                      <button
-                        className={state.audienceView === 'lifemembers' ? 'primary' : ''}
-                        onClick={() => api.showLifeMembers()}
-                      >
-                        Life members
-                      </button>
-                    </>
-                  ) : null}
+                  <button
+                    className={state.audienceView === 'toty' ? 'primary' : ''}
+                    onClick={() => api.showToty()}
+                  >
+                    Team of the year
+                  </button>
+                  <button
+                    className={state.audienceView === 'lifemembers' ? 'primary' : ''}
+                    onClick={() => api.showLifeMembers()}
+                  >
+                    Life members
+                  </button>
                   <button onClick={() => api.showScoreboard()}>Live vote count</button>
-                  <button onClick={() => api.showLeaderboard()}>Full leaderboard</button>
+                  <button onClick={() => api.showLeaderboard()}>All grades</button>
                 </div>
-                <p className="muted">
-                  Next follows the night list. Start round jumps that medal in at that round. Live vote count and leaderboard are side trips.
-                </p>
               </section>
               <section>
-                <h3 className="runsheet-heading unused">Unused</h3>
+                <h3 className="runsheet-heading">Unused</h3>
                 <ul
                   className="show-presos unused"
                   onDragOver={(event) => {
@@ -1168,9 +1394,8 @@ export function App() {
                   )}
                 </ul>
               </section>
-              {competition === 'wfl' ? (
               <section>
-                <h3 className="runsheet-heading">TOTY sponsor</h3>
+                <h3 className="runsheet-heading">Team of the year sponsor</h3>
                 <ul className="sponsor-picks">
                   {(state.sponsors ?? []).map((sponsor) => (
                     <li key={sponsor.id}>
@@ -1189,8 +1414,38 @@ export function App() {
                   <p className="muted">Add a sponsor on the Sponsors tab first.</p>
                 ) : null}
               </section>
-              ) : null}
             </aside>
+          </div>
+          <div className="show-toolbar-actions">
+            <button type="button" onClick={createNightRunsheet}>
+              Create runsheet
+            </button>
+            <button
+              type="button"
+              disabled={!activeRows.length}
+              onClick={() => setPrintJob(printJobForRunsheet(activeRows, state, presoStarts))}
+            >
+              Print
+            </button>
+            <button
+              type="button"
+              disabled={!activeRows.length}
+              onClick={() =>
+                setPrintJob({
+                  ...printJobForRunsheet(activeRows, state, presoStarts),
+                  action: 'save',
+                  fileName: runsheetFileName(state.season),
+                })
+              }
+            >
+              Save
+            </button>
+            <button type="button" onClick={addSplash}>
+              Add splash
+            </button>
+            <button type="button" className="ghost" onClick={() => setRunsheetOrder([])}>
+              Reset order
+            </button>
           </div>
         </div>
         );
@@ -1382,6 +1637,16 @@ function printJobForRunsheet(rows, state, presoStarts) {
           : 'No recipients yet',
       };
     }
+    if (row.type === 'leaderboard') {
+      return {
+        id: row.id,
+        n: index + 1,
+        kind: 'board',
+        title: info.title,
+        detail: info.detail,
+        cue: 'Full leaderboard after this grade',
+      };
+    }
     const deck = (state.presentation.decks ?? state.grades ?? []).find((item) => item.id === row.id);
     const start = String(presoStarts?.[row.id] ?? '').trim();
     return {
@@ -1392,7 +1657,7 @@ function printJobForRunsheet(rows, state, presoStarts) {
       detail: [deck?.name && deck.name !== deck.medalTitle ? deck.name : null, start ? `From round ${start}` : info.detail]
         .filter(Boolean)
         .join(' · '),
-      cue: 'Title slide, then the count, then the award',
+      cue: 'Title slide, then the count, then the award, then the leaderboard',
     };
   });
   return {
@@ -1714,6 +1979,27 @@ function SettingsPanel({ state, grade, grades }) {
 
         <section>
           <h3>Audience window</h3>
+          <div className="present-target">
+            <button
+              type="button"
+              className={s.presentTarget !== 'obs' ? 'primary' : ''}
+              onClick={() => api.setPresentTarget('display')}
+            >
+              Second display
+            </button>
+            <button
+              type="button"
+              className={s.presentTarget === 'obs' ? 'primary' : ''}
+              onClick={() => api.setPresentTarget('obs')}
+            >
+              OBS
+            </button>
+          </div>
+          {s.presentTarget === 'obs' ? (
+            <p className="muted">
+              Browser source in OBS: {state.obsUrl || 'starting…'}. Set the source to 1920 × 1080 and leave Shutdown source when not visible unticked.
+            </p>
+          ) : null}
           <p className="muted">
             {state.audienceView === 'leaderboard'
               ? 'Audience is on the full leaderboard.'
