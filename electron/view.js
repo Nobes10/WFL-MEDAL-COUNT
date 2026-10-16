@@ -455,13 +455,37 @@ function revealedBoardFromSlide(slide) {
   return Array.isArray(slide.board) ? slide.board : [];
 }
 
+function summarizeDeck(deck) {
+  const rounds = roundNumbersFromSlides(deck.slides);
+  return {
+    id: deck.id,
+    name: deck.name,
+    medalTitle: deck.medalTitle,
+    slideCount: deck.slides.length,
+    roundCount: rounds.length,
+    firstRound: rounds[0] ?? null,
+    lastRound: rounds[rounds.length - 1] ?? null,
+  };
+}
+
+function clubsForGrade(clubs, grade) {
+  const women = isWomenGrade(grade);
+  return (clubs ?? []).map((club) => {
+    const logoFile = logoFileForClub(club, clubs, { women });
+    return { ...club, logoFile, logoUrl: mediaUrl('logos', logoFile) };
+  });
+}
+
 function gradeBoardsView(store, clubs, settings, currentSlide, grades) {
-  const all = sortGrades(grades ?? []).map((grade) => ({
-    id: grade.id,
-    name: overlayGradeName(grade, settings),
-    medalTitle: overlayMedalTitle(grade, settings),
-    board: boardView(tallyGrade(grade, clubs, null, settings)),
-  }));
+  const all = sortGrades(grades ?? []).map((grade) => {
+    const gradeClubs = clubsForGrade(clubs, grade);
+    return {
+      id: grade.id,
+      name: overlayGradeName(grade, settings),
+      medalTitle: overlayMedalTitle(grade, settings),
+      board: boardView(tallyGrade(grade, gradeClubs, null, settings)),
+    };
+  });
   if (store.scoreboard?.leaderboardScope === 'grade') {
     const id = String(store.scoreboard?.gradeId || '');
     const one = all.filter((item) => String(item.id) === id);
@@ -484,14 +508,15 @@ function gradeBoardsView(store, clubs, settings, currentSlide, grades) {
   return all;
 }
 
-function scoreboardView(store, clubs, settings, sponsors, currentSlide, grades) {
+function scoreboardView(store, clubs, settings, sponsors, currentSlide, grades, boardGrades) {
   const list = grades ?? [];
   const gradeId = store.scoreboard?.gradeId || store.activeGradeId;
   const grade = list.find((item) => item.id === gradeId) ?? list[0] ?? null;
   if (!grade) return null;
   const topN = settings.leaderboardSize;
   const liveTopN = settings.liveVoteCount || 6;
-  const tally = tallyGrade(grade, clubs, null, settings);
+  const gradeClubs = clubsForGrade(clubs, grade);
+  const tally = tallyGrade(grade, gradeClubs, null, settings);
   const page = `${grade.id}:${store.scoreboard?.roundId || 'all'}`;
   return {
     gradeId: grade.id,
@@ -502,7 +527,7 @@ function scoreboardView(store, clubs, settings, sponsors, currentSlide, grades) 
     liveTopN,
     top8: boardView(tally.slice(0, liveTopN)),
     board: boardView(tally),
-    grades: gradeBoardsView(store, clubs, settings, currentSlide, list),
+    grades: gradeBoardsView(store, clubs, settings, currentSlide, boardGrades ?? list),
     sponsors: pickSponsorsForPage(sponsors, `scoreboard:${page}`),
     leaderboardSponsors: pickSponsorsForPage(sponsors, `leaderboard:${page}`),
   };
@@ -612,40 +637,44 @@ export function decorateState(store, paths) {
     };
   });
 
-  const grades = sortGrades(gradesForCompetition(store.grades ?? [], store.competition)).map((grade) => ({
-    ...grade,
-    name: overlayGradeName(grade, settings),
-    medalTitle: overlayMedalTitle(grade, settings),
-    progress: gradeProgress(grade, settings),
-    leaderboard: tallyGrade(grade, clubs, null, settings).map((row) => ({
-      ...row,
-      clubName: presentClubName(row.clubName),
-      photoUrl: mediaUrl('photos', row.photoFile),
-      logoUrl: mediaUrl('logos', row.logoFile),
-    })),
-    rounds: (grade.rounds ?? []).filter((round) => includeRound(round, settings)).map((round) => ({
-      ...round,
-      games: round.games.map((game) => {
-        const named = {
-          ...game,
-          homeName: presentClubName(game.homeName),
-          awayName: presentClubName(game.awayName),
-        };
-        return {
-          ...named,
-          ...forfeitDetails(named),
-          ...scoreFields(named),
-          homeLogoUrl: mediaUrl('logos', clubs.find((club) => club.id === game.homeId)?.logoFile),
-          awayLogoUrl: mediaUrl('logos', clubs.find((club) => club.id === game.awayId)?.logoFile),
-          players: (game.players ?? []).map((player) => ({
-            ...playerView(player),
-            clubName: presentClubName(player.clubName),
-            clubLabel: presentClubName(clubLabelForVote(grade, player.id, player.clubName)),
-          })),
-        };
-      }),
-    })),
-  }));
+  const allGrades = sortGrades(store.grades ?? []).map((grade) => {
+    const gradeClubs = clubsForGrade(rawClubs, grade);
+    return {
+      ...grade,
+      name: overlayGradeName(grade, settings),
+      medalTitle: overlayMedalTitle(grade, settings),
+      progress: gradeProgress(grade, settings),
+      leaderboard: tallyGrade(grade, gradeClubs, null, settings).map((row) => ({
+        ...row,
+        clubName: presentClubName(row.clubName),
+        photoUrl: mediaUrl('photos', row.photoFile),
+        logoUrl: mediaUrl('logos', row.logoFile),
+      })),
+      rounds: (grade.rounds ?? []).filter((round) => includeRound(round, settings)).map((round) => ({
+        ...round,
+        games: round.games.map((game) => {
+          const named = {
+            ...game,
+            homeName: presentClubName(game.homeName),
+            awayName: presentClubName(game.awayName),
+          };
+          return {
+            ...named,
+            ...forfeitDetails(named),
+            ...scoreFields(named),
+            homeLogoUrl: mediaUrl('logos', gradeClubs.find((club) => club.id === game.homeId)?.logoFile),
+            awayLogoUrl: mediaUrl('logos', gradeClubs.find((club) => club.id === game.awayId)?.logoFile),
+            players: (game.players ?? []).map((player) => ({
+              ...playerView(player),
+              clubName: presentClubName(player.clubName),
+              clubLabel: presentClubName(clubLabelForVote(grade, player.id, player.clubName)),
+            })),
+          };
+        }),
+      })),
+    };
+  });
+  const grades = gradesForCompetition(allGrades, store.competition);
 
   const activeGrade = grades.find((grade) => grade.id === store.activeGradeId) ?? grades[0] ?? null;
   const sponsors = sponsorViews(store);
@@ -655,26 +684,31 @@ export function decorateState(store, paths) {
     !Array.isArray(store.presentation.starts)
       ? store.presentation.starts
       : {};
-  const decks = grades.map((grade) => ({
+  const deckFor = (grade) => ({
     id: grade.id,
     name: grade.name,
     medalTitle: grade.medalTitle,
-    slides: decorateSlides(buildSlides(grade, clubs, store.sponsors, settings), sponsors),
-  }));
-  const knownIds = new Set(decks.map((deck) => deck.id));
+    slides: decorateSlides(
+      buildSlides(grade, clubsForGrade(rawClubs, grade), store.sponsors, settings),
+      sponsors
+    ),
+  });
+  const allDecks = allGrades.map(deckFor);
+  const decks = allDecks.filter((deck) => grades.some((grade) => grade.id === deck.id));
+  const knownIds = new Set(allDecks.map((deck) => deck.id));
   const queue = normalizePresentationQueue(store.presentation?.queue);
   const queueItem = queue[store.presentation?.queueIndex ?? 0];
   const queueGradeIds = queueItem?.type === 'preso'
     ? (queueItem.gradeIds ?? []).map((id) => String(id)).filter((id) => knownIds.has(id))
     : [];
   const presentationGrade =
-    grades.find((grade) => grade.id === (queueGradeIds[0] || store.presentation?.gradeId || store.activeGradeId)) ??
+    allGrades.find((grade) => grade.id === (queueGradeIds[0] || store.presentation?.gradeId || store.activeGradeId)) ??
     activeGrade;
   const presoSlidesFor = (gradeId) => {
-    const grade = grades.find((item) => item.id === gradeId);
+    const grade = allGrades.find((item) => item.id === gradeId);
     if (!grade) return [];
     return decorateSlides(
-      buildSlides(grade, clubs, store.sponsors, settings, { fromRound: starts[gradeId] }),
+      buildSlides(grade, clubsForGrade(rawClubs, grade), store.sponsors, settings, { fromRound: starts[gradeId] }),
       sponsors
     );
   };
@@ -725,20 +759,21 @@ export function decorateState(store, paths) {
               : presentationGrade?.id ?? null),
       slides,
       current: currentSlide,
-      decks: decks.map((deck) => {
-        const rounds = roundNumbersFromSlides(deck.slides);
-        return {
-          id: deck.id,
-          name: deck.name,
-          medalTitle: deck.medalTitle,
-          slideCount: deck.slides.length,
-          roundCount: rounds.length,
-          firstRound: rounds[0] ?? null,
-          lastRound: rounds[rounds.length - 1] ?? null,
-        };
-      }),
+      decks: decks.map(summarizeDeck),
+      allDecks: allDecks.map(summarizeDeck),
     },
-    scoreboard: scoreboardView(store, clubs, settings, sponsors, currentSlide, grades),
+    scoreboard: scoreboardView(
+      store,
+      clubs,
+      settings,
+      sponsors,
+      currentSlide,
+      womenComp &&
+      (store.scoreboard?.leaderboardScope === 'grade' || store.scoreboard?.leaderboardScope === 'current')
+        ? allGrades
+        : grades,
+      womenComp ? allGrades : grades
+    ),
     roster,
     toty: totyView(store, roster, grades),
     lifeMembers: lifeMembersView(store, roster, clubs),

@@ -147,6 +147,21 @@ function gradesForComp(grades, comp) {
   return (grades ?? []).filter((grade) => (comp === 'wwfl' ? isWomenGrade(grade) : !isWomenGrade(grade)));
 }
 
+function nightDecks(state, competition) {
+  const all = state?.presentation?.allDecks ?? [];
+  const current = state?.presentation?.decks ?? [];
+  if (competition === 'wwfl') return all.length ? all : current;
+  if (current.length) return current;
+  return gradesForComp(state?.grades ?? [], competition);
+}
+
+function deckLabel(deck, decks) {
+  if (!deck) return 'Grade';
+  const shared = (decks ?? []).filter((item) => item.name === deck.name).length > 1;
+  if (shared && deck.medalTitle) return `${deck.name} · ${deck.medalTitle}`;
+  return deck.name || 'Grade';
+}
+
 function isSplashRowId(id) {
   const key = String(id || '');
   return key === RUNSHEET_SPLASH || key.startsWith(`${RUNSHEET_SPLASH}-`);
@@ -177,14 +192,17 @@ function defaultRunsheetRows(decks) {
 }
 
 function runsheetRowForComp(row, competition, grades) {
+  const listed = (gradeId) => (grades ?? []).some((item) => String(item.id) === String(gradeId));
   if (row.type === 'grade' || row.type === 'leaderboard') {
     const gradeId = row.type === 'leaderboard' ? row.gradeId : row.id;
+    if (competition === 'wwfl') return listed(gradeId);
     const item = (grades ?? []).find((gradeItem) => String(gradeItem.id) === String(gradeId));
     return gradesForComp([item].filter(Boolean), competition).length > 0;
   }
   if (row.type === 'toty' || row.type === 'lifemembers') return true;
   if (row.type === 'splash' && String(row.id).startsWith(`${RUNSHEET_SPLASH}-before-`)) {
     const gradeId = String(row.id).slice(`${RUNSHEET_SPLASH}-before-`.length);
+    if (competition === 'wwfl') return listed(gradeId);
     const item = (grades ?? []).find((gradeItem) => String(gradeItem.id) === gradeId);
     return gradesForComp([item].filter(Boolean), competition).length > 0;
   }
@@ -195,7 +213,7 @@ function splashIntroduces(row, rows, state) {
   const index = rows.findIndex((item) => item.id === row.id);
   const next = index >= 0 ? rows[index + 1] : null;
   if (next?.type !== 'grade') return null;
-  return (state.presentation.decks ?? state.grades ?? []).find((item) => item.id === next.id) ?? null;
+  return nightDecks(state, state.competition).find((item) => item.id === next.id) ?? null;
 }
 
 function runsheetRowInfo(row, rows, state) {
@@ -204,13 +222,15 @@ function runsheetRowInfo(row, rows, state) {
     row.type === 'splash'
       ? rows.slice(0, rows.findIndex((item) => item.id === row.id) + 1).filter((item) => item.type === 'splash').length
       : 0;
+  const decks = nightDecks(state, state.competition);
   const deck =
     row.type === 'grade'
-      ? (state.presentation.decks ?? state.grades ?? []).find((item) => item.id === row.id)
+      ? decks.find((item) => item.id === row.id)
       : row.type === 'leaderboard'
-        ? (state.presentation.decks ?? state.grades ?? []).find((item) => String(item.id) === String(row.gradeId))
+        ? decks.find((item) => String(item.id) === String(row.gradeId))
         : null;
   const intro = row.type === 'splash' ? splashIntroduces(row, rows, state) : null;
+  const gradeLabelText = deckLabel(deck || intro, decks);
   const roundHint = deck
     ? deck.firstRound != null && deck.lastRound != null
       ? deck.firstRound === deck.lastRound
@@ -223,17 +243,17 @@ function runsheetRowInfo(row, rows, state) {
   const title =
     row.type === 'splash'
       ? intro && row.id !== RUNSHEET_SPLASH
-        ? `Pre-screen · ${intro.name}`
+        ? `Pre-screen · ${gradeLabelText}`
         : splashCount > 1 && row.id !== RUNSHEET_SPLASH
           ? `Splash ${splashNumber}`
           : 'Opening splash'
       : row.type === 'leaderboard'
-        ? `Leaderboard · ${deck?.name || 'Grade'}`
+        ? `Leaderboard · ${gradeLabelText}`
         : row.type === 'toty'
           ? 'Team of the year'
           : row.type === 'lifemembers'
             ? 'Life members'
-            : deck?.name || 'Grade';
+            : gradeLabelText;
   const clubHint = (state.splash?.teams ?? []).length
     ? `${state.splash?.title || 'WFL Medal Count'} · ${state.splash.teams.length} clubs A–Z`
     : 'WFL Medal Count and all club logos';
@@ -724,7 +744,7 @@ export function App() {
 
   function moveRunsheetTo(fromId, toId) {
     if (!fromId || !toId || fromId === toId) return;
-    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
+    const decks = nightDecks(state, competition);
     setRunsheetOrder((current) => {
       const ids = orderRunsheetRows(decks, current).map((row) => row.id);
       const from = ids.indexOf(fromId);
@@ -746,7 +766,7 @@ export function App() {
   }
 
   function addSplash() {
-    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
+    const decks = nightDecks(state, competition);
     const id = newSplashId();
     setRunsheetOrder((current) => {
       const ids = orderRunsheetRows(decks, current).map((row) => row.id);
@@ -762,7 +782,7 @@ export function App() {
 
   function removeSplash(id) {
     if (!isSplashRowId(id) || id === RUNSHEET_SPLASH) return;
-    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
+    const decks = nightDecks(state, competition);
     setRunsheetOrder((current) => orderRunsheetRows(decks, current).map((row) => row.id).filter((rowId) => rowId !== id));
     setRunsheetInclude((current) => {
       const next = { ...current };
@@ -772,16 +792,16 @@ export function App() {
   }
 
   function createNightRunsheet() {
-    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
+    const decks = nightDecks(state, competition);
     const rows = defaultRunsheetRows(decks);
     setRunsheetOrder(rows.map((row) => row.id));
     setRunsheetInclude(Object.fromEntries(rows.map((row) => [row.id, true])));
   }
 
   function startRunsheet(fromId) {
-    const decks = gradesForComp(state.presentation.decks ?? state.grades ?? [], competition);
+    const decks = nightDecks(state, competition);
     const rows = orderRunsheetRows(decks, runsheetOrder).filter((row) =>
-      runsheetRowForComp(row, competition, state.grades)
+      runsheetRowForComp(row, competition, decks)
     );
     const startAt = fromId ? rows.findIndex((row) => row.id === fromId) : 0;
     const items = rows.slice(Math.max(0, startAt)).filter((row) => runsheetIncluded(row.id)).map((row) => ({
@@ -1149,11 +1169,9 @@ export function App() {
       )}
 
       {tab === 'show' && (() => {
-        const allRows = orderRunsheetRows(
-          gradesForComp(state.presentation.decks ?? state.grades ?? [], competition),
-          runsheetOrder
-        ).filter((row) =>
-          runsheetRowForComp(row, competition, state.grades)
+        const decks = nightDecks(state, competition);
+        const allRows = orderRunsheetRows(decks, runsheetOrder).filter((row) =>
+          runsheetRowForComp(row, competition, decks)
         );
         const activeRows = allRows.filter((row) => runsheetIncluded(row.id));
         const unusedRows = allRows.filter((row) => !runsheetIncluded(row.id));
@@ -1647,7 +1665,7 @@ function printJobForRunsheet(rows, state, presoStarts) {
         cue: 'Full leaderboard after this grade',
       };
     }
-    const deck = (state.presentation.decks ?? state.grades ?? []).find((item) => item.id === row.id);
+    const deck = nightDecks(state, state.competition).find((item) => item.id === row.id);
     const start = String(presoStarts?.[row.id] ?? '').trim();
     return {
       id: row.id,
