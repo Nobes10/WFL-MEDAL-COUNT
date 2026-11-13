@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NormalizedLogo } from '../shared/NormalizedLogo.jsx';
 import { TotyPitch } from '../shared/TotyPitch.jsx';
+import cornerArt from '../assets/lower-third-corner.png';
 const api = window.wflMedal;
 
 function Photo({ src, name }) {
@@ -32,6 +33,33 @@ function ScoreTile({ game }) {
       </div>
     </article>
   );
+}
+
+function voteScaleForSlide(slide, competition) {
+  const women = [4, 3, 2, 1];
+  const picks = slide?.picks ?? [];
+  const text = [
+    competition,
+    slide?.competition,
+    slide?.women ? 'women' : '',
+    slide?.medalTitle,
+    slide?.gradeName,
+    slide?.homeName,
+    slide?.awayName,
+    ...picks.map((pick) => `${pick.points ?? ''} ${pick.clubName ?? ''} ${pick.clubLabel ?? ''}`),
+  ].join(' ');
+  if (
+    competition === 'wwfl' ||
+    slide?.competition === 'wwfl' ||
+    slide?.women ||
+    (Array.isArray(slide?.voteScale) && slide.voteScale.length > 3) ||
+    picks.some((pick) => Number(pick.points) === 4) ||
+    picks.length > 3 ||
+    /women|leverington|\bwwfl\b/i.test(text)
+  ) {
+    return women;
+  }
+  return [3, 2, 1];
 }
 
 function Top8({ rows, live, topN = 8, full = false }) {
@@ -157,7 +185,7 @@ function TotyLine({ picks, spots, reveal }) {
           name: player?.name || 'To be announced',
           clubName: player?.clubName,
           clubLabel: [player?.clubName, player?.number ? `No. ${player.number}` : null].filter(Boolean).join(' · ') || spot.posName,
-          photoUrl: player?.photoUrl || player?.logoUrl || null,
+          photoUrl: player?.photoUrl || null,
           logoUrl: player?.logoUrl || null,
           themeClubName: player?.themeClubName || player?.clubName,
         };
@@ -166,7 +194,6 @@ function TotyLine({ picks, spots, reveal }) {
             <VoteCard
               pick={pick}
               countLabel={spot.posName || spot.posLabel}
-              photoContain={!player?.photoUrl && Boolean(player?.logoUrl)}
             />
           </div>
         );
@@ -219,6 +246,120 @@ function SplashCrest({ team }) {
       ) : (
         <i>{(team.name || '?').slice(0, 1)}</i>
       )}
+    </div>
+  );
+}
+
+function CueTitleHold({ state, title, subtitle }) {
+  return (
+    <div className="stage type-cue cue-hold" onClick={() => api.presentationStep(1)}>
+      <StageHeader state={state} title={title} season={state?.season} />
+      <div className="life-title">
+        <h2>{title}</h2>
+        <small>{subtitle || state?.season || ''}</small>
+      </div>
+    </div>
+  );
+}
+
+function GoalkickerHold({ state, title }) {
+  return (
+    <CueTitleHold
+      state={state}
+      title={title || 'Leading Goal Kicker'}
+      subtitle={state?.season || 'Season leading goalkicker'}
+    />
+  );
+}
+
+function AwardReveal({ state, title, winner }) {
+  const name = winner?.name || title || 'Award';
+  const card = Boolean(winner && (winner.photoUrl || winner.logoUrl || winner.clubName));
+  if (card) {
+    return (
+      <div className="stage type-cue">
+        <StageHeader state={state} title={title || 'Award'} season={state?.season} />
+        <div className="winner-stage">
+          <div className="winner-main">
+            <WinnerCard winner={{ ...winner, votes: null }} badge={title || 'Award'} />
+            <aside className="winner-stats">
+              <h3>Season stats</h3>
+              <dl>
+                <div>
+                  <dt>Award</dt>
+                  <dd>{title || 'Award'}</dd>
+                </div>
+                {state?.season ? (
+                  <div>
+                    <dt>Season</dt>
+                    <dd>{state.season}</dd>
+                  </div>
+                ) : null}
+                {winner.clubName ? (
+                  <div>
+                    <dt>Club</dt>
+                    <dd>{winner.clubName}</dd>
+                  </div>
+                ) : null}
+                {winner.number ? (
+                  <div>
+                    <dt>Jumper</dt>
+                    <dd>No. {winner.number}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </aside>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="stage type-cue">
+      <StageHeader state={state} title={title || 'Award'} season={state?.season} />
+      <div className="life-title">
+        <p>{title || 'Award'}</p>
+        <h2>{name}</h2>
+        {state?.season ? <small>{state.season}</small> : null}
+      </div>
+    </div>
+  );
+}
+
+function GoalkickerBoard({ state, title, board }) {
+  const rows = (board ?? []).slice(0, 5);
+  return (
+    <div className="stage type-cue type-leaderboard cue-board" onClick={() => api.presentationStep(1)}>
+      <StageHeader state={state} title={title || 'Leading Goal Kickers'} season={state?.season} />
+      <div className="leaderboard-body">
+        <div className="grade-boards single goalkicker-board" style={{ '--grade-cols': 1, '--row-count': 5 }}>
+          <section className="grade-board">
+            {rows.length ? (
+              <ol style={{ '--row-count': 5 }}>
+                {Array.from({ length: 5 }, (_, index) => {
+                  const row = rows[index];
+                  return (
+                    <li key={row?.id || `empty-${index}`} className={row ? undefined : 'empty-row'}>
+                      <span>{index + 1}</span>
+                      {row?.photoUrl ? <img src={row.photoUrl} alt="" /> : <i className="photo-slot" />}
+                      {row?.logoUrl ? <NormalizedLogo className="club" src={row.logoUrl} pad={0.04} /> : <i className="club" />}
+                      <div>
+                        <strong>{row?.name || ''}</strong>
+                      </div>
+                      <b>
+                        {row ? row.goals : ''}
+                        {row ? <span className="goals-unit">{row.goals === 1 ? 'goal' : 'goals'}</span> : null}
+                      </b>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <p className="top8-empty">No goals yet</p>
+            )}
+          </section>
+        </div>
+      </div>
     </div>
   );
 }
@@ -339,7 +480,6 @@ function LifeMembersStage({ state }) {
         </div>
       ) : (
         <div className="life-title">
-          <p>To be awarded</p>
           <h2>Life membership</h2>
           <small>
             {members.length
@@ -469,6 +609,78 @@ function collectSlideMedia(slide) {
   return urls;
 }
 
+function PhotoWallStage({ state }) {
+  const crowd = state?.crowd ?? {};
+  const photos = crowd.approved ?? [];
+  const photoKey = photos.map((photo) => photo.file).join('|');
+  const holdMs = Number(crowd.holdMs) || 6000;
+  const fadeMs = Number(crowd.fadeMs) || 0;
+  const [stack, setStack] = useState([]);
+  const atRef = useRef(0);
+  const keyRef = useRef(0);
+  const holdRef = useRef(holdMs);
+  const fadeRef = useRef(fadeMs);
+  holdRef.current = holdMs;
+  fadeRef.current = fadeMs;
+
+  useEffect(() => {
+    const list = photos;
+    if (!list.length) {
+      setStack([]);
+      atRef.current = 0;
+      return;
+    }
+    const show = () => {
+      if (atRef.current >= list.length) atRef.current = 0;
+      const photo = list[atRef.current];
+      atRef.current = (atRef.current + 1) % list.length;
+      keyRef.current += 1;
+      const entry = { key: keyRef.current, photo };
+      const fade = fadeRef.current;
+      setStack((current) => [...current, entry].slice(-2));
+      window.setTimeout(() => {
+        setStack((current) => current.filter((item) => item.key === entry.key));
+      }, fade);
+    };
+    show();
+    const timer = window.setInterval(show, holdRef.current);
+    return () => window.clearInterval(timer);
+  }, [photoKey, holdMs, fadeMs]);
+
+  const artSrc = crowd.customArt && crowd.artUrl ? crowd.artUrl : cornerArt;
+
+  return (
+    <div className="wall-page">
+      {!photos.length ? <div className="wall-empty">Waiting for approved photos</div> : null}
+      {stack.map((entry) => {
+        const src = entry.photo.url;
+        const name = (entry.photo.from || '').trim();
+        const place = (entry.photo.venue || '').trim();
+        return (
+          <div key={entry.key} className="wall-slide" style={{ animationDuration: `${fadeMs}ms` }}>
+            <div className="wall-blur" style={{ backgroundImage: `url("${src}")` }} />
+            <img className="wall-photo" src={src} alt="" />
+            {name || place ? (
+              <div className="wall-lower wall-lower--corner">
+                <img className="wall-lower-art" src={artSrc} alt="" />
+                {name ? <div className="wall-lower-name">{name}</div> : null}
+                {place ? (
+                  <div className="wall-lower-place">
+                    {entry.photo.logoUrl ? (
+                      <img className="wall-lower-club" src={entry.photo.logoUrl} alt="" />
+                    ) : null}
+                    <span>{place}</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function AudienceApp() {
   const [state, setState] = useState(null);
 
@@ -523,7 +735,7 @@ export function AudienceApp() {
         api.updateSettings({ audienceFullscreen: state?.settings?.audienceFullscreen === false });
         return;
       }
-      if (view === 'toty' || view === 'lifemembers' || view === 'splash') {
+      if (view === 'toty' || view === 'lifemembers' || view === 'splash' || view === 'cue' || view === 'leaderboard') {
         if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'Enter') {
           event.preventDefault();
           api.presentationStep(1);
@@ -564,6 +776,14 @@ export function AudienceApp() {
     return <SplashStage state={state} />;
   }
 
+  if (state?.audienceView === 'cue') {
+    return <CueStage state={state} />;
+  }
+
+  if (state?.audienceView === 'crowd') {
+    return <PhotoWallStage state={state} />;
+  }
+
   if (state?.audienceView === 'scoreboard') {
     return <VoteCountStage state={state} />;
   }
@@ -574,6 +794,7 @@ export function AudienceApp() {
   const topN = slide?.topN ?? settings.leaderboardSize ?? 8;
   const liveN = slide?.liveTopN ?? settings.liveVoteCount ?? 6;
   const season = slide?.season || state?.season;
+  const voteScale = voteScaleForSlide(slide, state?.competition);
 
   return (
     <div className={`stage type-${slide?.type ?? 'empty'}`}>
@@ -625,8 +846,8 @@ export function AudienceApp() {
                 <ScoreTile game={slide} />
               </div>
             ) : null}
-            <div className="votes-row">
-              {[3, 2, 1].map((points) => {
+            <div className={`votes-row${voteScale.length > 3 ? ' scale-4' : ''}`}>
+              {voteScale.map((points) => {
                 const pick = (slide.picks ?? []).find((item) => item.points === points);
                 const shown = Boolean(pick) && typeof slide.reveal === 'number' && points >= slide.reveal;
                 return (
@@ -711,13 +932,110 @@ function winnerStatItems(winner, medalTitle, season) {
   if (winner.goals != null) add('Goals', Math.round(Number(winner.goals) * 10) / 10);
   add('Votes', winner.votes);
   add('Games polled', winner.gamesVoted ?? winner.games);
+  if (winner.fours) add('4-vote games', winner.fours);
   add('3-vote games', winner.threes);
   add('2-vote games', winner.twos);
   add('1-vote games', winner.ones);
   return items;
 }
 
-function WinnerCard({ winner, life }) {
+function CueStage({ state }) {
+  const cue = state.cue ?? {};
+  const winner = cue.winner;
+  const goalkicker = cue.kind === 'goalkicker' || cue.id === 'leadingGoalkicker';
+  const award = cue.kind === 'award' || String(cue.id || '').startsWith('award-');
+  const step = Number.isFinite(Number(cue.step))
+    ? Number(cue.step)
+    : cue.revealed === true
+      ? 1
+      : 0;
+  if (goalkicker && step <= 0) {
+    return <GoalkickerHold state={state} title={cue.title || 'Leading Goal Kicker'} />;
+  }
+  if (award && step <= 0) {
+    return (
+      <CueTitleHold
+        state={state}
+        title={cue.title || 'Award'}
+        subtitle={state?.season || ''}
+      />
+    );
+  }
+  if (award) {
+    return (
+      <AwardReveal
+        state={state}
+        title={cue.title || 'Award'}
+        winner={cue.winner || (cue.detail ? { name: cue.detail } : null)}
+      />
+    );
+  }
+  if (goalkicker && step >= 2) {
+    return (
+      <GoalkickerBoard
+        state={state}
+        title={cue.title || 'Leading Goal Kickers'}
+        board={cue.board ?? []}
+      />
+    );
+  }
+  if (goalkicker && winner) {
+    return (
+      <div className="stage type-cue">
+        <StageHeader state={state} title={cue.title || 'Leading Goal Kicker'} season={state?.season} />
+        <div className="winner-stage">
+          <div className="winner-main">
+            <WinnerCard winner={{ ...winner, votes: null }} badge={cue.title || 'Leading Goal Kicker'} />
+            <aside className="winner-stats">
+              <h3>Season stats</h3>
+              <dl>
+                <div>
+                  <dt>Award</dt>
+                  <dd>{cue.title || 'Leading Goal Kicker'}</dd>
+                </div>
+                {state?.season ? (
+                  <div>
+                    <dt>Season</dt>
+                    <dd>{state.season}</dd>
+                  </div>
+                ) : null}
+                {winner.clubName ? (
+                  <div>
+                    <dt>Club</dt>
+                    <dd>{winner.clubName}</dd>
+                  </div>
+                ) : null}
+                {winner.number ? (
+                  <div>
+                    <dt>Jumper</dt>
+                    <dd>No. {winner.number}</dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt>Goals</dt>
+                  <dd>{winner.goals}</dd>
+                </div>
+              </dl>
+            </aside>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="stage type-cue">
+      <StageHeader state={state} title={cue.title || 'Run sheet'} season={state?.season} />
+      <div className="life-title">
+        <p>{state?.season || 'Program'}</p>
+        <h2>{cue.title || 'Run sheet'}</h2>
+        <small>{cue.detail || cue.cue || ''}</small>
+      </div>
+    </div>
+  );
+}
+
+function WinnerCard({ winner, life, badge }) {
   if (!winner) return <div className="waiting">No winner yet</div>;
   const theme = clubTheme(winner.themeClubName || winner.clubName, winner);
   return (
@@ -726,17 +1044,15 @@ function WinnerCard({ winner, life }) {
       style={{ backgroundColor: theme.primary, '--club-primary': theme.primary }}
     >
       <div className="vote-card-bg">
-        {winner.logoUrl ? <img className="club-watermark" src={winner.logoUrl} alt="" /> : null}
+        {winner.logoUrl ? <NormalizedLogo className="club-watermark" src={winner.logoUrl} pad={0.02} /> : null}
       </div>
-      <b className="vote-count">{life ? 'Life member' : 'Winner'}</b>
+      <b className="vote-count">{badge || (life ? 'Life member' : 'Winner')}</b>
       <div className="player-stack">
         {winner.photoUrl ? (
-          <img className="player-cutout" src={winner.photoUrl} alt={winner.name} />
-        ) : winner.logoUrl ? (
-          <img className="player-cutout contain" src={winner.logoUrl} alt="" />
-        ) : (
-          <div className="player-cutout placeholder" aria-hidden="true" />
-        )}
+          <div className="player-photo">
+            <img className="player-cutout" src={winner.photoUrl} alt={winner.name} />
+          </div>
+        ) : null}
         <div className="player-id">
           <strong>{winner.name}</strong>
           <small>
@@ -786,7 +1102,7 @@ function clubTheme(name, person) {
   return { primary: '#1a140e', dark: true };
 }
 
-function VoteCard({ pick, countLabel, photoContain }) {
+function VoteCard({ pick, countLabel }) {
   const theme = clubTheme(pick.themeClubName || pick.clubName, pick);
   return (
     <article
@@ -794,23 +1110,17 @@ function VoteCard({ pick, countLabel, photoContain }) {
       style={{ backgroundColor: theme.primary, '--club-primary': theme.primary }}
     >
       <div className="vote-card-bg">
-        {pick.logoUrl ? <img className="club-watermark" src={pick.logoUrl} alt="" /> : null}
+        {pick.logoUrl ? <NormalizedLogo className="club-watermark" src={pick.logoUrl} pad={0.02} /> : null}
       </div>
       <b className="vote-count">
         {countLabel ?? `${pick.points} ${pick.points === 1 ? 'vote' : 'votes'}`}
       </b>
       <div className="player-stack">
         {pick.photoUrl ? (
-          <img
-            className={`player-cutout${photoContain ? ' contain' : ''}`}
-            src={pick.photoUrl}
-            alt=""
-          />
-        ) : pick.logoUrl ? (
-          <img className="player-cutout contain" src={pick.logoUrl} alt="" />
-        ) : (
-          <div className="player-cutout placeholder" aria-hidden="true" />
-        )}
+          <div className="player-photo">
+            <img className="player-cutout" src={pick.photoUrl} alt="" />
+          </div>
+        ) : null}
         <div className="player-id">
           <strong>{pick.name}</strong>
           <small>{pick.clubLabel || pick.clubName}</small>

@@ -201,14 +201,11 @@ function PlayerCard({ player, pos, showRole }) {
   const { first, last } = nameParts(player);
   const photo = player?.photoUrl;
   const logo = player?.logoUrl;
-  const useLogo = Boolean(player && !photo && logo);
   return (
     <>
-      <span className={`toty-frame${useLogo ? ' is-logo' : ''}`}>
+      <span className="toty-frame">
         {photo ? (
           <img src={photo} alt="" />
-        ) : useLogo ? (
-          <img src={logo} alt="" />
         ) : (
           <i>{pos.label}</i>
         )}

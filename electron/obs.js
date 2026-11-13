@@ -1,6 +1,7 @@
 import { createServer } from 'http';
 import { existsSync, readFileSync } from 'fs';
 import { basename, extname, join } from 'path';
+import { artFilePath, photoPath } from './crowdPhotos.js';
 
 const PORTS = [4777, 4778, 4779, 4780, 4781];
 const clients = new Set();
@@ -42,7 +43,9 @@ const TYPES = {
 
 function rewriteMedalUrls(value) {
   if (typeof value === 'string') {
-    return value.replace(/^medal:\/\/(logos|photos|sponsors)\/(.+)$/, '/media/$1/$2');
+    return value
+      .replace(/^medal:\/\/crowd\/(.+)$/, '/crowd/$1')
+      .replace(/^medal:\/\/(logos|photos|sponsors)\/(.+)$/, '/media/$1/$2');
   }
   if (Array.isArray(value)) return value.map(rewriteMedalUrls);
   if (value && typeof value === 'object') {
@@ -62,7 +65,7 @@ function sendFile(res, filePath) {
   const type = TYPES[extname(filePath).toLowerCase()] || 'application/octet-stream';
   res.writeHead(200, {
     'Content-Type': type,
-    'Cache-Control': type.startsWith('image/') || type.includes('javascript') || type.includes('css') ? 'public, max-age=3600' : 'no-store',
+    'Cache-Control': type.startsWith('image/') ? 'public, max-age=3600' : 'no-store',
   });
   res.end(readFileSync(filePath));
 }
@@ -70,7 +73,8 @@ function sendFile(res, filePath) {
 function audienceHtml(distDir) {
   const file = join(distDir, 'audience.html');
   if (!existsSync(file)) return null;
-  const html = readFileSync(file, 'utf8');
+  const bust = `v=${Date.now()}`;
+  let html = readFileSync(file, 'utf8').replace(/(src|href)="(\.\/assets\/[^"]+)"/g, `$1="$2?${bust}"`);
   if (html.includes('window.wflMedal')) return html;
   return html.replace('</head>', `${BRIDGE}</head>`);
 }
@@ -87,7 +91,7 @@ export function broadcastObs(audienceState) {
   }
 }
 
-export function startObsServer({ distDir, mediaFile, getAudience }) {
+export function startObsServer({ distDir, mediaFile, getAudience, getSettings }) {
   const handler = (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
     const path = decodeURIComponent(url.pathname);
@@ -136,6 +140,16 @@ export function startObsServer({ distDir, mediaFile, getAudience }) {
     const media = path.match(/^\/media\/(logos|photos|sponsors)\/([^/]+)$/);
     if (media) {
       sendFile(res, mediaFile(media[1], basename(media[2])));
+      return;
+    }
+
+    if (path === '/crowd/art') {
+      sendFile(res, artFilePath(getSettings?.() ?? {}));
+      return;
+    }
+    const crowd = path.match(/^\/crowd\/(waiting|approved)\/([^/]+)$/);
+    if (crowd) {
+      sendFile(res, photoPath(crowd[1], crowd[2]));
       return;
     }
 

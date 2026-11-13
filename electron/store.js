@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { clampLifeMemberStep, clampTotyStep, CLUB_LOGO_OVERRIDES, WOMEN_CLUB_LOGO_OVERRIDES, createEmptyStore, mergeSettings, normalizeAudienceView, normalizeLifeMembers, normalizePresentationQueue, normalizeToty } from './constants.js';
+import { clampCueStep, clampLifeMemberStep, clampTotyStep, CLUB_LOGO_OVERRIDES, WOMEN_CLUB_LOGO_OVERRIDES, createEmptyStore, mergeSettings, normalizeAudienceView, normalizeLifeMembers, normalizeNightExtras, normalizePresentationQueue, normalizeToty } from './constants.js';
 
 export function storePaths(userData) {
   const root = join(userData, 'wfl-medal-count');
@@ -77,6 +77,9 @@ export function loadStore(paths) {
       totyStep: clampTotyStep(parsed.totyStep),
       lifeMembers: normalizeLifeMembers(parsed.lifeMembers),
       lifeMemberStep: clampLifeMemberStep(parsed.lifeMemberStep, normalizeLifeMembers(parsed.lifeMembers).length),
+      nightExtras: normalizeNightExtras(parsed.nightExtras),
+      cueKey: String(parsed.cueKey || '') || null,
+      cueStep: clampCueStep(parsed.cueStep),
     };
   } catch {
     return createEmptyStore();

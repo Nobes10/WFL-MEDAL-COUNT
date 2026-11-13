@@ -1,11 +1,25 @@
-import { forfeitDetails, homeAndAwayRoundNumber, includeRound, isForfeitGame, mergeSettings } from './constants.js';
+import {
+  forfeitDetails,
+  homeAndAwayRoundNumber,
+  includeRound,
+  isForfeitGame,
+  isWomenGrade,
+  leagueGradeFrom,
+  mergeSettings,
+  totyGradeFrom,
+  voteKeyForPoints,
+  voteScaleForGrade,
+} from './constants.js';
 import { scoreFields } from './score.js';
 
 export function playerName(player) {
   const first = String(player?.firstName ?? '').trim();
   const last = String(player?.lastName ?? '').trim();
-  const name = `${first} ${last}`.trim();
-  return name || 'Private Player';
+  const combined = `${first} ${last}`.trim();
+  if (combined) return combined;
+  const named = String(player?.name ?? '').trim();
+  if (named && named !== 'Private Player') return named;
+  return 'Private Player';
 }
 
 export function findPlayerInGame(game, playerId) {
@@ -48,15 +62,17 @@ export function clubLabelForVote(grade, playerId, voteClubName) {
   return voteName || homeName;
 }
 
-export function votesComplete(votes) {
-  return Boolean(votes?.three && votes?.two && votes?.one);
+export function votesComplete(votes, scale) {
+  const keys = (scale ?? [3, 2, 1]).map(voteKeyForPoints);
+  return keys.every((key) => votes?.[key]);
 }
 
-export function gameVoteStatus(game) {
+export function gameVoteStatus(game, scale) {
   if (!game?.votes) return 'empty';
-  const { three, two, one } = game.votes;
-  if (three && two && one) return 'done';
-  if (three || two || one) return 'partial';
+  const keys = (scale ?? [3, 2, 1]).map(voteKeyForPoints);
+  const filled = keys.filter((key) => game.votes[key]);
+  if (filled.length === keys.length) return 'done';
+  if (filled.length) return 'partial';
   return 'empty';
 }
 
@@ -78,11 +94,10 @@ export function tallyGrade(grade, clubs = [], throughRoundId = null, settings = 
         }
         continue;
       }
-      const votes = [
-        [3, game.votes?.three],
-        [2, game.votes?.two],
-        [1, game.votes?.one],
-      ].filter(([points]) => {
+      const scale = voteScaleForGrade(grade);
+      const votes = scale
+        .map((points) => [points, game.votes?.[voteKeyForPoints(points)]])
+        .filter(([points]) => {
         if (!isUntil) return true;
         return typeof reveal === 'number' && points >= reveal;
       });
@@ -98,6 +113,7 @@ export function tallyGrade(grade, clubs = [], throughRoundId = null, settings = 
           number: player.number,
           photoFile: player.photoFile,
           votes: 0,
+          fours: 0,
           threes: 0,
           twos: 0,
           ones: 0,
@@ -106,6 +122,7 @@ export function tallyGrade(grade, clubs = [], throughRoundId = null, settings = 
         };
         existing.votes += points;
         existing.games += 1;
+        if (points === 4) existing.fours += 1;
         if (points === 3) existing.threes += 1;
         if (points === 2) existing.twos += 1;
         if (points === 1) existing.ones += 1;
@@ -137,6 +154,7 @@ export function tallyGrade(grade, clubs = [], throughRoundId = null, settings = 
         number: row.number,
         photoFile: row.photoFile,
         votes: row.votes,
+        fours: row.fours,
         threes: row.threes,
         twos: row.twos,
         ones: row.ones,
@@ -146,6 +164,7 @@ export function tallyGrade(grade, clubs = [], throughRoundId = null, settings = 
     })
     .sort((a, b) => {
       if (b.votes !== a.votes) return b.votes - a.votes;
+      if ((b.fours ?? 0) !== (a.fours ?? 0)) return (b.fours ?? 0) - (a.fours ?? 0);
       if (b.threes !== a.threes) return b.threes - a.threes;
       if (b.twos !== a.twos) return b.twos - a.twos;
       return a.name.localeCompare(b.name);
@@ -185,6 +204,7 @@ export function playerCampaign(grade, playerId, settings = {}) {
         if (player.position) position = player.position;
       }
       const haul =
+        (game.votes?.four === playerId ? 4 : 0) +
         (game.votes?.three === playerId ? 3 : 0) +
         (game.votes?.two === playerId ? 2 : 0) +
         (game.votes?.one === playerId ? 1 : 0);
@@ -219,7 +239,9 @@ function enrichWinner(row, grade, settings, runnerUp) {
     ...row,
     ...extra,
     themeClubName: extra.homeClubName || row.clubName,
-    pollPercent: gamesPlayed ? Math.round((row.votes / (gamesPlayed * 3)) * 1000) / 10 : null,
+    pollPercent: gamesPlayed
+      ? Math.round((row.votes / (gamesPlayed * Math.max(...voteScaleForGrade(grade)))) * 1000) / 10
+      : null,
     avgVotes: gamesPlayed ? (row.votes / gamesPlayed).toFixed(2) : null,
     margin: runnerUp ? row.votes - runnerUp.votes : null,
   };
@@ -233,14 +255,16 @@ export function gradeProgress(grade, settings = {}) {
     if (isForfeitGame(game)) return false;
     return (game.players?.length ?? 0) > 0 || game.status === 'FINAL';
   });
-  const done = eligible.filter((game) => gameVoteStatus(game) === 'done').length;
+  const done = eligible.filter((game) => gameVoteStatus(game, voteScaleForGrade(grade)) === 'done').length;
   return { done, total: eligible.length };
 }
 
-export function votePicksForGame(game, clubs = [], grade = null) {
-  return [3, 2, 1]
+export function votePicksForGame(game, clubs = [], grade = null, competition) {
+  const scale = [...voteScaleForGrade(grade, competition)];
+  if (game?.votes?.four && !scale.includes(4)) scale.unshift(4);
+  return scale
     .map((points) => {
-      const key = points === 3 ? 'three' : points === 2 ? 'two' : 'one';
+      const key = voteKeyForPoints(points);
       const playerId = game.votes?.[key];
       if (!playerId) return null;
       const player = findPlayerInGame(game, playerId);
@@ -306,7 +330,7 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
     }
     const playable = (round.games ?? []).filter((game) => {
       if (isForfeitGame(game)) return true;
-      return Boolean(game.votes?.three || game.votes?.two || game.votes?.one);
+      return Boolean(game.votes?.four || game.votes?.three || game.votes?.two || game.votes?.one);
     });
     const isStartRound = Boolean(fromRound && roundNo === fromRound);
     if (!playable.length && !isStartRound) continue;
@@ -361,14 +385,16 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
         continue;
       }
 
-      const picks = votePicksForGame(game, clubs, grade);
+      const picks = votePicksForGame(game, clubs, grade, options.competition);
       if (!picks.length) continue;
+      const scale = [...voteScaleForGrade(grade, options.competition)];
       const votesSlide = {
         type: 'votes',
         gradeId: grade.id,
         roundId: round.id,
         roundName: round.name,
         gameId: game.id,
+        gradeName: grade.name,
         medalTitle: grade.medalTitle,
         season: grade.season,
         showMatchScore: s.showMatchScoreOnVotes,
@@ -381,6 +407,9 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
         homeLogoFile: clubs.find((club) => club.id === game.homeId)?.logoFile,
         awayLogoFile: clubs.find((club) => club.id === game.awayId)?.logoFile,
         picks,
+        women: isWomenGrade(grade) || scale.length > 3,
+        competition: options.competition || null,
+        voteScale: scale,
       };
       if (s.showVoteHoldSlide) {
         slides.push({
@@ -428,4 +457,60 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
   }
 
   return slides;
+}
+
+export function leadingGoalkickers(grades, clubs = [], settings = {}, limit = 5) {
+  const pool = grades ?? [];
+  const grade = leagueGradeFrom(pool) ?? totyGradeFrom(pool) ?? pool[0] ?? null;
+  if (!grade) return [];
+
+  const totals = new Map();
+  const clubById = new Map((clubs ?? []).map((club) => [club.id, club]));
+  const size = Math.max(1, Math.round(Number(limit) || 5));
+
+  for (const round of grade.rounds ?? []) {
+    if (!includeRound(round, settings)) continue;
+    for (const game of round.games ?? []) {
+      if (isForfeitGame(game)) continue;
+      for (const player of game.players ?? []) {
+        const id = String(player?.id || '');
+        if (!id) continue;
+        const existing = totals.get(id) ?? {
+          id,
+          name: playerName(player),
+          clubId: player.clubId,
+          clubName: player.clubName,
+          number: player.number,
+          photoFile: player.photoFile,
+          goals: 0,
+          games: 0,
+        };
+        existing.goals += Number(player.goals) || 0;
+        existing.games += 1;
+        if (player.photoFile) existing.photoFile = player.photoFile;
+        if (player.number) existing.number = player.number;
+        totals.set(id, existing);
+      }
+    }
+  }
+
+  return [...totals.values()]
+    .filter((row) => row.goals > 0)
+    .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name))
+    .slice(0, size)
+    .map((row) => {
+      const home = homeClubForPlayer(grade, row.id);
+      const club = clubById.get(home?.id || row.clubId);
+      return {
+        ...row,
+        clubId: home?.id || row.clubId,
+        clubName: home?.name || row.clubName,
+        logoFile: club?.logoFile ?? null,
+        gradeName: grade.medalTitle || grade.name,
+      };
+    });
+}
+
+export function leadingGoalkicker(grades, clubs = [], settings = {}) {
+  return leadingGoalkickers(grades, clubs, settings, 1)[0] ?? null;
 }

@@ -1,7 +1,9 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NormalizedLogo } from '../shared/NormalizedLogo.jsx';
 const TeamOfTheYear = lazy(() => import('./TeamOfTheYear.jsx').then((mod) => ({ default: mod.TeamOfTheYear })));
 const LifeMembers = lazy(() => import('./LifeMembers.jsx').then((mod) => ({ default: mod.LifeMembers })));
+const CrowdPhotos = lazy(() => import('./CrowdPhotos.jsx').then((mod) => ({ default: mod.CrowdPhotos })));
 
 const api = window.wflMedal;
 
@@ -13,6 +15,34 @@ const COMP_KEY = 'wfl-competition';
 const RUNSHEET_SPLASH = 'splash';
 const RUNSHEET_TOTY = 'toty';
 const RUNSHEET_LIFE = 'lifemembers';
+const RUNSHEET_GOALKICKER = 'leadingGoalkicker';
+const GOALKICKER_EXTRA = {
+  id: RUNSHEET_GOALKICKER,
+  title: 'Leading Goal Kicker',
+  detail: 'Season leading goalkicker',
+  cue: 'Announce the leading goal kicker',
+  kind: 'goalkicker',
+};
+
+function isGuestCueId(id) {
+  const key = String(id || '');
+  return key.startsWith('cue-') || key === 'guestSpeaker' || key === 'seasonRecap';
+}
+
+function isAwardCueId(id) {
+  const key = String(id || '');
+  return key.startsWith('award-');
+}
+
+function isEditableCueId(id) {
+  return isGuestCueId(id) || isAwardCueId(id);
+}
+
+function runsheetCue(id, extras = []) {
+  const key = String(id || '');
+  if (key === RUNSHEET_GOALKICKER) return GOALKICKER_EXTRA;
+  return (extras ?? []).find((item) => item.id === key) ?? null;
+}
 
 function readPresoStarts() {
   try {
@@ -58,6 +88,7 @@ function runsheetIncludeKey(competition) {
 function runsheetRowOwner(id, womenIds, menIds) {
   const key = String(id);
   if (key === RUNSHEET_SPLASH) return 'both';
+  if (key === RUNSHEET_GOALKICKER || isGuestCueId(key) || isAwardCueId(key)) return 'both';
   if (key === RUNSHEET_TOTY || key === RUNSHEET_LIFE) return 'wfl';
   if (key.startsWith(`${RUNSHEET_SPLASH}-before-`)) {
     const gradeId = key.slice(`${RUNSHEET_SPLASH}-before-`.length);
@@ -138,9 +169,10 @@ function readCompetition() {
 
 function isWomenGrade(grade) {
   if (!grade) return false;
-  if (grade.women === true) return true;
-  const text = `${grade.sourceName || ''} ${grade.name || ''}`;
-  return /women/i.test(text);
+  if (grade.women === true || grade.women === 'true') return true;
+  if (Number(grade.gradeGroup) === 2) return true;
+  const text = `${grade.sourceName || ''} ${grade.name || ''} ${grade.medalTitle || ''} ${grade.homeName || ''} ${grade.awayName || ''}`;
+  return /women|leverington|\bwwfl\b/i.test(text);
 }
 
 function gradesForComp(grades, comp) {
@@ -148,9 +180,7 @@ function gradesForComp(grades, comp) {
 }
 
 function nightDecks(state, competition) {
-  const all = state?.presentation?.allDecks ?? [];
   const current = state?.presentation?.decks ?? [];
-  if (competition === 'wwfl') return all.length ? all : current;
   if (current.length) return current;
   return gradesForComp(state?.grades ?? [], competition);
 }
@@ -171,40 +201,58 @@ function newSplashId() {
   return `${RUNSHEET_SPLASH}-${Date.now().toString(36)}${Math.floor(Math.random() * 36).toString(36)}`;
 }
 
-function preSplashId(gradeId) {
-  return `${RUNSHEET_SPLASH}-before-${gradeId}`;
+function newGuestId() {
+  return `cue-${Date.now().toString(36)}${Math.floor(Math.random() * 36).toString(36)}`;
+}
+
+function newAwardId() {
+  return `award-${Date.now().toString(36)}${Math.floor(Math.random() * 36).toString(36)}`;
+}
+
+function preSplashId(targetId) {
+  return `${RUNSHEET_SPLASH}-before-${targetId}`;
 }
 
 function leaderboardRowId(gradeId) {
   return `leaderboard-${gradeId}`;
 }
 
-function defaultRunsheetRows(decks) {
+function extrasFrom(state) {
+  return (Array.isArray(state?.nightExtras) ? state.nightExtras : []).filter(
+    (item) => item?.id && item.id !== RUNSHEET_GOALKICKER && item.kind !== 'goalkicker'
+  );
+}
+
+function extraById(state, id) {
+  return runsheetCue(id, extrasFrom(state));
+}
+
+function defaultRunsheetRows(decks, extras) {
   const rows = [{ type: 'splash', id: RUNSHEET_SPLASH }];
   (decks ?? []).forEach((item, index) => {
     if (index > 0) rows.push({ type: 'splash', id: preSplashId(item.id) });
     rows.push({ type: 'grade', id: item.id });
     rows.push({ type: 'leaderboard', id: leaderboardRowId(item.id), gradeId: String(item.id) });
   });
+  rows.push({ type: 'cue', id: RUNSHEET_GOALKICKER });
   rows.push({ type: 'toty', id: RUNSHEET_TOTY });
   rows.push({ type: 'lifemembers', id: RUNSHEET_LIFE });
+  for (const cue of extras ?? []) {
+    rows.push({ type: 'cue', id: cue.id });
+  }
   return rows;
 }
 
-function runsheetRowForComp(row, competition, grades) {
+function runsheetRowForComp(row, _competition, grades) {
   const listed = (gradeId) => (grades ?? []).some((item) => String(item.id) === String(gradeId));
   if (row.type === 'grade' || row.type === 'leaderboard') {
     const gradeId = row.type === 'leaderboard' ? row.gradeId : row.id;
-    if (competition === 'wwfl') return listed(gradeId);
-    const item = (grades ?? []).find((gradeItem) => String(gradeItem.id) === String(gradeId));
-    return gradesForComp([item].filter(Boolean), competition).length > 0;
+    return listed(gradeId);
   }
-  if (row.type === 'toty' || row.type === 'lifemembers') return true;
+  if (row.type === 'toty' || row.type === 'lifemembers' || row.type === 'cue') return true;
   if (row.type === 'splash' && String(row.id).startsWith(`${RUNSHEET_SPLASH}-before-`)) {
     const gradeId = String(row.id).slice(`${RUNSHEET_SPLASH}-before-`.length);
-    if (competition === 'wwfl') return listed(gradeId);
-    const item = (grades ?? []).find((gradeItem) => String(gradeItem.id) === gradeId);
-    return gradesForComp([item].filter(Boolean), competition).length > 0;
+    return listed(gradeId);
   }
   return true;
 }
@@ -253,7 +301,9 @@ function runsheetRowInfo(row, rows, state) {
           ? 'Team of the year'
           : row.type === 'lifemembers'
             ? 'Life members'
-            : gradeLabelText;
+            : row.type === 'cue'
+              ? extraById(state, row.id)?.title || 'Run sheet'
+              : gradeLabelText;
   const clubHint = (state.splash?.teams ?? []).length
     ? `${state.splash?.title || 'WFL Medal Count'} · ${state.splash.teams.length} clubs A–Z`
     : 'WFL Medal Count and all club logos';
@@ -272,12 +322,18 @@ function runsheetRowInfo(row, rows, state) {
           ? (state.lifeMembers?.members ?? []).length
             ? `${state.lifeMembers.members.length} ${state.lifeMembers.members.length === 1 ? 'recipient' : 'recipients'}`
             : 'Add recipients on the Life members tab'
+          : row.type === 'cue'
+            ? extraById(state, row.id)?.kind === 'goalkicker' && state.leadingGoalkicker
+              ? `${state.leadingGoalkicker.name} · ${state.leadingGoalkicker.goals} ${
+                  state.leadingGoalkicker.goals === 1 ? 'goal' : 'goals'
+                }`
+              : extraById(state, row.id)?.detail || ''
           : [deck?.medalTitle, roundHint].filter(Boolean).join(' · ');
   return { title, detail, isGrade: row.type === 'grade' };
 }
 
-function orderRunsheetRows(decks, savedOrder) {
-  const defaults = defaultRunsheetRows(decks);
+function orderRunsheetRows(decks, savedOrder, extras) {
+  const defaults = defaultRunsheetRows(decks, extras);
   if (!savedOrder?.length) return defaults;
   const byId = new Map(defaults.map((row) => [String(row.id), row]));
   const ordered = [];
@@ -285,6 +341,7 @@ function orderRunsheetRows(decks, savedOrder) {
   for (const id of savedOrder) {
     const key = String(id);
     if (!key || seen.has(key)) continue;
+    if (key === `${RUNSHEET_SPLASH}-before-${RUNSHEET_GOALKICKER}`) continue;
     if (isSplashRowId(key) && !byId.has(key)) {
       ordered.push({ type: 'splash', id: key });
       seen.add(key);
@@ -299,6 +356,17 @@ function orderRunsheetRows(decks, savedOrder) {
   for (const row of defaults) {
     if (!byId.has(String(row.id))) continue;
     if (row.type === 'splash' && row.id !== RUNSHEET_SPLASH) {
+      byId.delete(String(row.id));
+      continue;
+    }
+    if (row.type === 'cue' && row.id !== RUNSHEET_GOALKICKER) {
+      byId.delete(String(row.id));
+      continue;
+    }
+    if (row.type === 'cue' && row.id === RUNSHEET_GOALKICKER) {
+      const totyIndex = ordered.findIndex((item) => item.type === 'toty');
+      const insertAt = totyIndex >= 0 ? totyIndex : ordered.length;
+      ordered.splice(insertAt, 0, row);
       byId.delete(String(row.id));
       continue;
     }
@@ -324,11 +392,41 @@ function isTypingTarget(event) {
   return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable;
 }
 
-function voteStatus(game) {
+function voteKey(points) {
+  if (Number(points) === 4) return 'four';
+  if (Number(points) === 3) return 'three';
+  if (Number(points) === 2) return 'two';
+  return 'one';
+}
+
+function voteScale(grade, competition) {
+  if (competition === 'wwfl' || isWomenGrade(grade)) return [4, 3, 2, 1];
+  return [3, 2, 1];
+}
+
+function pointsForPlayer(votes, playerId) {
+  if (!playerId || !votes) return null;
+  if (votes.four === playerId) return 4;
+  if (votes.three === playerId) return 3;
+  if (votes.two === playerId) return 2;
+  if (votes.one === playerId) return 1;
+  return null;
+}
+
+function nextVotePick(votes, scale) {
+  for (const points of scale) {
+    if (!votes?.[voteKey(points)]) return points;
+  }
+  return null;
+}
+
+function voteStatus(game, scale = [3, 2, 1]) {
   if (game?.forfeit) return 'done';
   const votes = game?.votes ?? {};
-  if (votes.three && votes.two && votes.one) return 'done';
-  if (votes.three || votes.two || votes.one) return 'partial';
+  const keys = scale.map(voteKey);
+  const filled = keys.filter((key) => votes[key]);
+  if (filled.length === keys.length) return 'done';
+  if (filled.length) return 'partial';
   return 'empty';
 }
 
@@ -351,7 +449,237 @@ function homeGradeMark(tone) {
   return 'L';
 }
 
-function ControlHome({ state, grades, competition, onEnterVotes, onShowNight, onOpenToty, onOpenLife, onOpenGrade }) {
+function playerSearchHay(player) {
+  return `${player.name} ${player.number} ${player.clubName} ${player.position} ${(player.gradeNames ?? []).join(' ')}`;
+}
+
+function AwardSearchMenu({ anchorRef, open, matches, selectedId, onPick }) {
+  const [box, setBox] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setBox(null);
+      return undefined;
+    }
+    const update = () => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const width = Math.min(Math.max(rect.width, 360), Math.max(280, window.innerWidth - 16));
+      const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+      const below = window.innerHeight - rect.bottom - 8;
+      const above = rect.top - 8;
+      const placeBelow = below >= 180 || below >= above;
+      const maxHeight = Math.min(340, Math.max(140, placeBelow ? below : above));
+      const top = placeBelow ? rect.bottom + 6 : Math.max(8, rect.top - maxHeight - 6);
+      setBox({ top, left, width, maxHeight });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open, matches.length, anchorRef]);
+
+  if (!open || !box) return null;
+  return createPortal(
+    <ul
+      className="award-search-pop"
+      style={{ top: box.top, left: box.left, width: box.width, maxHeight: box.maxHeight }}
+      role="listbox"
+    >
+      {matches.map((player) => (
+        <li key={player.id}>
+          <button
+            type="button"
+            className={`award-search-choice${player.id === selectedId ? ' selected' : ''}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onPick(player)}
+          >
+            {player.photoUrl ? <img src={player.photoUrl} alt="" /> : <i />}
+            {player.logoUrl ? <img className="club" src={player.logoUrl} alt="" /> : <i className="club" />}
+            <span>
+              <strong>
+                {player.number ? `${player.number}. ` : ''}
+                {player.name}
+              </strong>
+              <small>
+                {player.clubName}
+                {player.gradeNames?.length ? ` · ${player.gradeNames.join(', ')}` : ''}
+              </small>
+            </span>
+          </button>
+        </li>
+      ))}
+      {!matches.length ? <li className="muted">No matching players. Type a name to use it anyway.</li> : null}
+    </ul>,
+    document.body
+  );
+}
+
+function RunsheetSpeakerFields({ extra, roster, onUpdate }) {
+  const award = extra?.kind === 'award' || isAwardCueId(extra?.id);
+  const fallbackTitle = award ? 'Award' : 'Guest Speaker';
+  const [title, setTitle] = useState(extra?.title || fallbackTitle);
+  const [detail, setDetail] = useState(extra?.detail ?? '');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const winnerInputRef = useRef(null);
+
+  useEffect(() => {
+    setTitle(extra?.title || fallbackTitle);
+    setDetail(extra?.detail ?? '');
+  }, [extra?.id, extra?.title, extra?.detail, fallbackTitle]);
+
+  const selected = useMemo(() => {
+    const id = String(extra?.playerId || '');
+    if (!id) return null;
+    return (roster ?? []).find((player) => String(player.id) === id) ?? null;
+  }, [extra?.playerId, roster]);
+
+  const matches = useMemo(() => {
+    if (!award) return [];
+    const hay = detail.trim().toLowerCase();
+    if (!hay) return [];
+    return (roster ?? [])
+      .filter((player) => playerSearchHay(player).toLowerCase().includes(hay))
+      .slice(0, 8);
+  }, [award, detail, roster]);
+
+  function saveWinner(name, playerId = null) {
+    const next = String(name || '').trim();
+    setDetail(next);
+    setSearchOpen(false);
+    if (next === (extra?.detail ?? '') && playerId === (extra?.playerId || null)) return;
+    onUpdate?.({ detail: next, cue: next, playerId });
+  }
+
+  function pickPlayer(player) {
+    saveWinner(player.name, player.id);
+  }
+
+  function commitTypedWinner() {
+    const next = detail.trim();
+    const current = selected && next === selected.name ? selected : null;
+    if (current) {
+      saveWinner(current.name, current.id);
+      return;
+    }
+    const match = (roster ?? []).find(
+      (player) => player.name.toLowerCase() === next.toLowerCase()
+    );
+    if (match) {
+      saveWinner(match.name, match.id);
+      return;
+    }
+    saveWinner(next, null);
+  }
+
+  return (
+    <div className="speaker-fields">
+      <input
+        className="speaker-title"
+        value={title}
+        aria-label={award ? 'Award name' : 'Guest speaker title'}
+        onChange={(event) => setTitle(event.target.value)}
+        onBlur={() => {
+          const next = title.trim() || fallbackTitle;
+          setTitle(next);
+          if (next !== (extra?.title || '')) onUpdate?.({ title: next });
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      />
+      {award ? (
+        <div className="award-winner">
+          {selected ? (
+            <div className="award-picked">
+              {selected.photoUrl ? <img src={selected.photoUrl} alt="" /> : <i />}
+              {selected.logoUrl ? <img className="club" src={selected.logoUrl} alt="" /> : <i className="club" />}
+              <span>
+                {selected.number ? `${selected.number}. ` : ''}
+                {selected.name}
+                {selected.clubName ? ` · ${selected.clubName}` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={() => saveWinner('', null)}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                Clear
+              </button>
+            </div>
+          ) : null}
+          <input
+            ref={winnerInputRef}
+            className="speaker-detail"
+            value={detail}
+            placeholder="Search player or type a name"
+            aria-label="Award winner"
+            onChange={(event) => {
+              setDetail(event.target.value);
+              setSearchOpen(true);
+            }}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={commitTypedWinner}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown' && matches[0]) {
+                event.preventDefault();
+                pickPlayer(matches[0]);
+                return;
+              }
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                if (matches[0] && detail.trim()) pickPlayer(matches[0]);
+                else event.currentTarget.blur();
+              }
+              if (event.key === 'Escape') setSearchOpen(false);
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          />
+          <AwardSearchMenu
+            anchorRef={winnerInputRef}
+            open={searchOpen && Boolean(detail.trim())}
+            matches={matches}
+            selectedId={extra?.playerId}
+            onPick={pickPlayer}
+          />
+        </div>
+      ) : (
+        <input
+          className="speaker-detail"
+          value={detail}
+          placeholder="Sub line"
+          aria-label="Guest speaker sub line"
+          onChange={(event) => setDetail(event.target.value)}
+          onBlur={() => {
+            if (detail !== (extra?.detail ?? '')) onUpdate?.({ detail, cue: detail, playerId: null });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        />
+      )}
+    </div>
+  );
+}
+
+function ControlHome({
+  state,
+  grades,
+  competition,
+  onEnterVotes,
+  onShowNight,
+  onOpenToty,
+  onOpenLife,
+  onOpenGoalkicker,
+  onOpenCrowd,
+  onOpenGrade,
+}) {
   return (
     <div className="control-home">
       <div className="control-home-hero">
@@ -448,6 +776,50 @@ function ControlHome({ state, grades, competition, onEnterVotes, onShowNight, on
             </em>
           </span>
         </button>
+        <button type="button" className="home-grade" data-tone="cue" onClick={onOpenGoalkicker}>
+          <span className="home-grade-shine" aria-hidden="true" />
+          <span className="home-grade-medal" aria-hidden="true">GK</span>
+          <small>Goals</small>
+          <span className="home-grade-foot">
+            <strong>Leading Goal Kicker</strong>
+            <span className="home-grade-bar" aria-hidden="true">
+              <span style={{ width: state.leadingGoalkicker ? '100%' : '0%' }} />
+            </span>
+            <em>
+              {state.leadingGoalkicker
+                ? `${state.leadingGoalkicker.name} · ${state.leadingGoalkicker.goals} ${
+                    state.leadingGoalkicker.goals === 1 ? 'goal' : 'goals'
+                  }`
+                : 'Season leader'}
+            </em>
+          </span>
+        </button>
+        <button type="button" className="home-grade" data-tone="crowd" onClick={onOpenCrowd}>
+          <span className="home-grade-shine" aria-hidden="true" />
+          <span className="home-grade-medal" aria-hidden="true">PH</span>
+          <small>Stream</small>
+          <span className="home-grade-foot">
+            <strong>Crowd photos</strong>
+            <span className="home-grade-bar" aria-hidden="true">
+              <span
+                style={{
+                  width: state.crowd?.approvedCount
+                    ? '100%'
+                    : state.crowd?.waitingCount
+                      ? '40%'
+                      : '0%',
+                }}
+              />
+            </span>
+            <em>
+              {state.crowd?.waitingCount
+                ? `${state.crowd.waitingCount} waiting`
+                : state.crowd?.approvedCount
+                  ? `${state.crowd.approvedCount} in the slideshow`
+                  : 'QR, approve, show on stream'}
+            </em>
+          </span>
+        </button>
         </div>
       </div>
     </div>
@@ -540,6 +912,7 @@ export function App() {
             ? { ...current.presentation, ...patch.presentation }
             : current.presentation,
           toty: patch.toty ? { ...current.toty, ...patch.toty } : current.toty,
+          cue: patch.cue ? { ...current.cue, ...patch.cue } : current.cue,
           lifeMembers: patch.lifeMembers
             ? { ...current.lifeMembers, ...patch.lifeMembers }
             : current.lifeMembers,
@@ -635,7 +1008,7 @@ export function App() {
         api.updateSettings({ audienceFullscreen: state?.settings?.audienceFullscreen === false });
         return;
       }
-      if (view === 'toty' || view === 'lifemembers' || view === 'splash') {
+      if (view === 'toty' || view === 'lifemembers' || view === 'splash' || view === 'cue' || view === 'leaderboard') {
         if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           api.presentationStep(1);
@@ -746,7 +1119,7 @@ export function App() {
     if (!fromId || !toId || fromId === toId) return;
     const decks = nightDecks(state, competition);
     setRunsheetOrder((current) => {
-      const ids = orderRunsheetRows(decks, current).map((row) => row.id);
+      const ids = orderRunsheetRows(decks, current, extrasFrom(state)).map((row) => row.id);
       const from = ids.indexOf(fromId);
       const to = ids.indexOf(toId);
       if (from < 0 || to < 0) return ids;
@@ -769,7 +1142,7 @@ export function App() {
     const decks = nightDecks(state, competition);
     const id = newSplashId();
     setRunsheetOrder((current) => {
-      const ids = orderRunsheetRows(decks, current).map((row) => row.id);
+      const ids = orderRunsheetRows(decks, current, extrasFrom(state)).map((row) => row.id);
       let insertAt = 0;
       ids.forEach((rowId, index) => {
         if (isSplashRowId(rowId)) insertAt = index + 1;
@@ -783,7 +1156,58 @@ export function App() {
   function removeSplash(id) {
     if (!isSplashRowId(id) || id === RUNSHEET_SPLASH) return;
     const decks = nightDecks(state, competition);
-    setRunsheetOrder((current) => orderRunsheetRows(decks, current).map((row) => row.id).filter((rowId) => rowId !== id));
+    setRunsheetOrder((current) => orderRunsheetRows(decks, current, extrasFrom(state)).map((row) => row.id).filter((rowId) => rowId !== id));
+    setRunsheetInclude((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
+
+  async function addNightCue(kind) {
+    const award = kind === 'award';
+    const id = award ? newAwardId() : newGuestId();
+    const extra = {
+      id,
+      title: award ? 'Award' : 'Guest Speaker',
+      detail: '',
+      cue: '',
+      kind: award ? 'award' : 'cue',
+    };
+    const next = await api.addNightExtra(extra);
+    if (next) setState(next);
+    const extras = extrasFrom(next || { nightExtras: [...extrasFrom(state), extra] });
+    const decks = nightDecks(next || state, competition);
+    setRunsheetOrder((current) => {
+      const ids = orderRunsheetRows(decks, current, extras).map((row) => row.id);
+      if (ids.includes(id)) return ids;
+      let insertAt = ids.length;
+      ids.forEach((rowId, index) => {
+        if (isEditableCueId(rowId)) insertAt = index + 1;
+      });
+      const copy = ids.slice();
+      copy.splice(insertAt, 0, id);
+      return copy;
+    });
+    setRunsheetInclude((current) => ({ ...current, [id]: true }));
+  }
+
+  function addGuestSpeaker() {
+    return addNightCue('cue');
+  }
+
+  function addAward() {
+    return addNightCue('award');
+  }
+
+  function removeGuestSpeaker(id) {
+    if (!isEditableCueId(id)) return;
+    api.removeNightExtra(id);
+    const extras = extrasFrom(state).filter((item) => item.id !== id);
+    const decks = nightDecks(state, competition);
+    setRunsheetOrder((current) =>
+      orderRunsheetRows(decks, current, extras).map((row) => row.id).filter((rowId) => rowId !== id)
+    );
     setRunsheetInclude((current) => {
       const next = { ...current };
       delete next[id];
@@ -793,14 +1217,14 @@ export function App() {
 
   function createNightRunsheet() {
     const decks = nightDecks(state, competition);
-    const rows = defaultRunsheetRows(decks);
+    const rows = defaultRunsheetRows(decks, extrasFrom(state));
     setRunsheetOrder(rows.map((row) => row.id));
     setRunsheetInclude(Object.fromEntries(rows.map((row) => [row.id, true])));
   }
 
   function startRunsheet(fromId) {
     const decks = nightDecks(state, competition);
-    const rows = orderRunsheetRows(decks, runsheetOrder).filter((row) =>
+    const rows = orderRunsheetRows(decks, runsheetOrder, extrasFrom(state)).filter((row) =>
       runsheetRowForComp(row, competition, decks)
     );
     const startAt = fromId ? rows.findIndex((row) => row.id === fromId) : 0;
@@ -813,7 +1237,8 @@ export function App() {
     api.presentationStart({ items });
   }
 
-  const nextPick = !selected?.votes?.three ? 3 : !selected?.votes?.two ? 2 : !selected?.votes?.one ? 1 : null;
+  const voteScaleNow = voteScale(grade, competition);
+  const nextPick = nextVotePick(selected?.votes, voteScaleNow);
 
   return (
     <>
@@ -872,6 +1297,7 @@ export function App() {
           ['votes', 'Enter votes'],
           ['board', 'Leaderboard'],
           ['show', 'Presentation'],
+          ['crowd', 'Crowd photos'],
           ['sponsors', 'Sponsors'],
           ['settings', 'Settings'],
         ].map(([id, label]) => (
@@ -881,7 +1307,7 @@ export function App() {
         ))}
       </nav>
 
-      {tab !== 'settings' && tab !== 'toty' && tab !== 'lifemembers' && tab !== 'show' && tab !== 'home' ? (
+      {tab !== 'settings' && tab !== 'toty' && tab !== 'lifemembers' && tab !== 'show' && tab !== 'home' && tab !== 'crowd' ? (
       <div className="grades">
         {visibleGrades.map((item) => {
           const complete = item.progress.total > 0 && item.progress.done >= item.progress.total;
@@ -918,7 +1344,7 @@ export function App() {
               <section key={round.id}>
                 <h3>{round.name}</h3>
                 {round.games.map((game) => {
-                  const status = voteStatus(game);
+                  const status = voteStatus(game, voteScaleNow);
                   return (
                     <button
                       key={game.id}
@@ -953,7 +1379,7 @@ export function App() {
           <main className="sheet">
             {!selected ? (
               <div className="empty">
-                Sync from the website to load team sheets, then pick 3-2-1 for each game before the night.
+                Sync from the website to load team sheets, then pick {voteScaleNow.join('-')} for each game before the night.
               </div>
             ) : (
               <>
@@ -977,9 +1403,9 @@ export function App() {
                     </p>
                   </div>
                   {selected.forfeit ? null : (
-                    <div className="vote-picks">
-                      {[3, 2, 1].map((points) => {
-                        const key = points === 3 ? 'three' : points === 2 ? 'two' : 'one';
+                    <div className={`vote-picks${voteScaleNow.length > 3 ? ' scale-4' : ''}`}>
+                      {voteScaleNow.map((points) => {
+                        const key = voteKey(points);
                         const player = selected.players.find((item) => item.id === selected.votes?.[key]);
                         return (
                           <div
@@ -1008,7 +1434,7 @@ export function App() {
                 </div>
 
                 {selected.forfeit ? (
-                  <div className="empty">No 3-2-1 for this game. It will show as a forfeit in the presentation.</div>
+                  <div className="empty">No {voteScaleNow.join('-')} for this game. It will show as a forfeit in the presentation.</div>
                 ) : (
                   <>
                     <div className="toolbar">
@@ -1066,7 +1492,7 @@ export function App() {
                       <span className="muted">
                         {nextPick
                           ? `Click a player for ${nextPick}. Click a voted player to remove.`
-                          : '3-2-1 in. Click a voted player to remove, or Clear.'}
+                          : `${voteScaleNow.join('-')} in. Click a voted player to remove, or Clear.`}
                       </span>
                     </div>
 
@@ -1105,6 +1531,8 @@ export function App() {
           onShowNight={() => setTab('show')}
           onOpenToty={() => setTab('toty')}
           onOpenLife={() => setTab('lifemembers')}
+          onOpenGoalkicker={() => setTab('show')}
+          onOpenCrowd={() => setTab('crowd')}
           onOpenGrade={(gradeId) => {
             api.setActiveGrade(gradeId);
             setTab('votes');
@@ -1124,10 +1552,16 @@ export function App() {
         </Suspense>
       )}
 
+      {tab === 'crowd' && (
+        <Suspense fallback={<div className="boot">Loading crowd photos…</div>}>
+          <CrowdPhotos state={state} />
+        </Suspense>
+      )}
+
       {tab === 'board' && (
         <div className="board board-cols" style={{ '--grade-cols': Math.max(visibleGrades.length, 1) }}>
           <p className="muted board-intro">
-            Running totals from votes already entered. Print a leaderboard here, or Print announcer beside the grade tabs for the 3-2-1 script.
+            Running totals from votes already entered. Print a leaderboard here, or Print announcer beside the grade tabs for the 3-2-1 / 4-3-2-1 script.
           </p>
           {visibleGrades.map((item) => (
             <section key={item.id} className={`board-block${item.id === grade?.id ? ' current' : ''}`}>
@@ -1170,7 +1604,7 @@ export function App() {
 
       {tab === 'show' && (() => {
         const decks = nightDecks(state, competition);
-        const allRows = orderRunsheetRows(decks, runsheetOrder).filter((row) =>
+        const allRows = orderRunsheetRows(decks, runsheetOrder, extrasFrom(state)).filter((row) =>
           runsheetRowForComp(row, competition, decks)
         );
         const activeRows = allRows.filter((row) => runsheetIncluded(row.id));
@@ -1185,7 +1619,7 @@ export function App() {
           return (
             <li
               key={row.id}
-              className={`${current ? 'active' : ''}${dragOver === row.id ? ' drop' : ''}${runsheetDrag?.id === row.id ? ' dragging' : ''}${unused ? ' unused-row' : ''}${info.isGrade && !unused ? ' grade-row' : ''}${hasBoard ? ' has-board' : ''}${!unused && row.type === 'leaderboard' ? ' board-row' : ''}`.trim()}
+              className={`${current ? 'active' : ''}${dragOver === row.id ? ' drop' : ''}${runsheetDrag?.id === row.id ? ' dragging' : ''}${unused ? ' unused-row' : ''}${info.isGrade && !unused ? ' grade-row' : ''}${hasBoard ? ' has-board' : ''}${!unused && row.type === 'leaderboard' ? ' board-row' : ''}${!unused && row.type === 'cue' ? ' cue-row' : ''}`.trim()}
               draggable
               onDragStart={(event) => {
                 if (!runsheetDragHandle.current) {
@@ -1225,10 +1659,18 @@ export function App() {
               >
                 ⋮⋮
               </span>
-              <div>
-                <strong>{info.title}</strong>
-                <small>{info.detail}</small>
-              </div>
+              {row.type === 'cue' && isEditableCueId(row.id) ? (
+                <RunsheetSpeakerFields
+                  extra={extraById(state, row.id)}
+                  roster={state.roster}
+                  onUpdate={(patch) => api.updateNightExtra(row.id, patch)}
+                />
+              ) : (
+                <div>
+                  <strong>{info.title}</strong>
+                  <small>{info.detail}</small>
+                </div>
+              )}
               {info.isGrade && !unused ? (
                 <label>
                   Start round
@@ -1265,6 +1707,11 @@ export function App() {
                     Delete
                   </button>
                 ) : null}
+                {row.type === 'cue' && isEditableCueId(row.id) ? (
+                  <button type="button" onClick={() => removeGuestSpeaker(row.id)}>
+                    Delete
+                  </button>
+                ) : null}
                 {unused ? null : (
                   <button className="primary" type="button" onClick={() => startRunsheet(row.id)}>
                     From here
@@ -1287,6 +1734,20 @@ export function App() {
                 ? state.lifeMembers?.current?.name
                   ? `Life members · ${state.lifeMembers.current.name}`
                   : 'Life members'
+                : state.audienceView === 'cue'
+                  ? state.cue?.kind === 'goalkicker' && (state.cue?.step ?? 0) >= 2
+                    ? 'Leading Goal Kicker · Top 5'
+                    : state.cue?.kind === 'goalkicker' && (state.cue?.step ?? 0) >= 1 && state.cue?.winner?.name
+                      ? `Leading Goal Kicker · ${state.cue.winner.name}`
+                      : state.cue?.kind === 'goalkicker'
+                        ? 'Leading Goal Kicker'
+                        : (state.cue?.kind === 'award' || isAwardCueId(state.cue?.id)) &&
+                            (state.cue?.step ?? 0) >= 1 &&
+                            (state.cue?.winner?.name || state.cue?.detail)
+                          ? `${state.cue.title || 'Award'} · ${state.cue.winner?.name || state.cue.detail}`
+                          : state.cue?.kind === 'award' || isAwardCueId(state.cue?.id)
+                            ? state.cue?.title || 'Award'
+                            : state.cue?.title || 'Run sheet slide'
                 : `Slide ${(state.presentation.slideIndex ?? 0) + 1} of ${state.presentation.slides?.length ?? 0}`;
         return (
         <div className="show">
@@ -1323,7 +1784,7 @@ export function App() {
                 }}
               >
                 {activeRows.length ? activeRows.map((row) => renderRow(row, activeRows, false)) : (
-                  <li className="runsheet-empty">Nothing on the night yet. Restore a row from Unused, or add a splash.</li>
+                  <li className="runsheet-empty">Nothing on the night yet. Restore a row from Unused, or add a splash, guest speaker or award.</li>
                 )}
               </ul>
             </section>
@@ -1461,6 +1922,12 @@ export function App() {
             <button type="button" onClick={addSplash}>
               Add splash
             </button>
+            <button type="button" onClick={addGuestSpeaker}>
+              Add guest speaker
+            </button>
+            <button type="button" onClick={addAward}>
+              Add award
+            </button>
             <button type="button" className="ghost" onClick={() => setRunsheetOrder([])}>
               Reset order
             </button>
@@ -1504,14 +1971,24 @@ export function App() {
         onPrint={() => {
           const selected = (state.grades ?? []).filter((item) => announcerIds.includes(item.id));
           if (!selected.length) return;
-          setPrintJob(printJobForAnnouncer(selected, state));
+          setPrintJob(
+            printJobForAnnouncer(
+              selected,
+              state,
+              nightCuePrintItems(state, competition, runsheetOrder, runsheetInclude)
+            )
+          );
           setAnnouncerOpen(false);
         }}
         onSave={() => {
           const selected = (state.grades ?? []).filter((item) => announcerIds.includes(item.id));
           if (!selected.length) return;
           setPrintJob({
-            ...printJobForAnnouncer(selected, state),
+            ...printJobForAnnouncer(
+              selected,
+              state,
+              nightCuePrintItems(state, competition, runsheetOrder, runsheetInclude)
+            ),
             action: 'save',
             fileName: announcerFileName(selected, state.season),
           });
@@ -1547,9 +2024,9 @@ function printJobForSlide(slide, state) {
   };
 }
 
-function announcerPicks(game, clubs = []) {
-  return [3, 2, 1].map((points) => {
-    const key = points === 3 ? 'three' : points === 2 ? 'two' : 'one';
+function announcerPicks(game, clubs = [], scale = [3, 2, 1]) {
+  return scale.map((points) => {
+    const key = voteKey(points);
     const player = (game.players ?? []).find((item) => item.id === game.votes?.[key]);
     if (!player) {
       return { points, name: '—', number: '', logoUrl: null };
@@ -1619,7 +2096,7 @@ function announcerRounds(grade, clubs) {
       scoreLine: game.scoreLine,
       forfeit: game.forfeit,
       forfeitLine: game.forfeitLine,
-      picks: announcerPicks(game, clubs),
+      picks: announcerPicks(game, clubs, voteScale(grade)),
     })),
   }));
 }
@@ -1665,6 +2142,17 @@ function printJobForRunsheet(rows, state, presoStarts) {
         cue: 'Full leaderboard after this grade',
       };
     }
+    if (row.type === 'cue') {
+      const meta = extraById(state, row.id);
+      return {
+        id: row.id,
+        n: index + 1,
+        kind: 'cue',
+        title: meta?.title || info.title,
+        detail: info.detail,
+        cue: meta?.cue || '',
+      };
+    }
     const deck = nightDecks(state, state.competition).find((item) => item.id === row.id);
     const start = String(presoStarts?.[row.id] ?? '').trim();
     return {
@@ -1689,7 +2177,44 @@ function printJobForRunsheet(rows, state, presoStarts) {
   };
 }
 
-function printJobForAnnouncer(grades, state) {
+function nightCuePrintItems(state, competition, runsheetOrder, runsheetInclude) {
+  const decks = nightDecks(state, competition);
+  const rows = orderRunsheetRows(decks, runsheetOrder, extrasFrom(state)).filter((row) =>
+    runsheetRowForComp(row, competition, decks)
+  );
+  return rows
+    .filter((row) => row.type === 'cue' && runsheetInclude[row.id] !== false)
+    .map((row) => {
+      const meta = extraById(state, row.id);
+      const info = runsheetRowInfo(row, rows, state);
+      return {
+        id: row.id,
+        title: meta?.title || info.title,
+        cue: meta?.cue || '',
+        detail: info.detail,
+        winner:
+          meta?.kind === 'goalkicker' && state.leadingGoalkicker
+            ? {
+                name: state.leadingGoalkicker.name,
+                goals: state.leadingGoalkicker.goals,
+                clubName: state.leadingGoalkicker.clubName,
+              }
+            : meta?.kind === 'award' && (meta.detail || meta.playerId)
+              ? (() => {
+                  const player = meta.playerId
+                    ? (state.roster ?? []).find((row) => String(row.id) === String(meta.playerId))
+                    : null;
+                  return {
+                    name: player?.name || meta.detail,
+                    clubName: player?.clubName || '',
+                  };
+                })()
+              : null,
+      };
+    });
+}
+
+function printJobForAnnouncer(grades, state, cues = []) {
   const list = (Array.isArray(grades) ? grades : [grades]).filter(Boolean);
   const first = list[0];
   return {
@@ -1699,6 +2224,7 @@ function printJobForAnnouncer(grades, state) {
     season: first?.season || state.season,
     leagueName: state.settings?.leagueName || 'Whyalla Football League',
     logoUrl: state.wflLogoUrl,
+    cues,
     sections: list.map((grade) => ({
       id: grade.id,
       title: grade.medalTitle || grade.name,
@@ -1724,6 +2250,7 @@ function PrintSheet({ job }) {
     job.sections ??
     [{ id: 'one', title: job.title, rounds: job.rounds ?? [] }];
   const many = sections.length > 1;
+  const cues = job.cues ?? [];
   return (
     <div className={`print-sheet${job.kind === 'announcer' ? ' announcer' : ''}${job.kind === 'runsheet' ? ' runsheet' : ''}`}>
       <header className="print-head">
@@ -1764,7 +2291,7 @@ function PrintSheet({ job }) {
               {pages.map((rounds, pageIndex) => {
                 const first = index === 0 && pageIndex === 0;
                 const lastOfSection = pageIndex === pages.length - 1;
-                const lastSheet = index === sections.length - 1 && lastOfSection;
+                const lastSheet = index === sections.length - 1 && lastOfSection && !cues.length;
                 const hasGradeTitle = pageIndex === 0 && many;
                 const hasWinner = lastOfSection && Boolean(section.winner);
                 return (
@@ -1791,7 +2318,7 @@ function PrintSheet({ job }) {
                         <span>{game.forfeit ? game.forfeitLine || 'Forfeit' : game.scoreLine || '—'}</span>
                       </div>
                       {game.forfeit ? (
-                        <p className="print-skip">No 3-2-1</p>
+                        <p className="print-skip">No votes</p>
                       ) : (
                         <ol>
                           {game.picks.map((pick) => (
@@ -1837,6 +2364,30 @@ function PrintSheet({ job }) {
             </section>
             );
           })}
+          {cues.length ? (
+            <section className="print-cues">
+              <h2 className="print-grade-title">Night extras</h2>
+              <ol className="print-cue-list">
+                {cues.map((item) => (
+                  <li key={item.id}>
+                    <h3>{item.title}</h3>
+                    {item.winner ? (
+                      <p>
+                        {item.winner.name}
+                        {item.winner.clubName ? ` · ${item.winner.clubName}` : ''}
+                        {item.winner.goals != null
+                          ? ` · ${item.winner.goals} ${item.winner.goals === 1 ? 'goal' : 'goals'}`
+                          : ''}
+                      </p>
+                    ) : item.detail ? (
+                      <p>{item.detail}</p>
+                    ) : null}
+                    {item.cue ? <p className="print-run-cue">{item.cue}</p> : null}
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ) : null}
           <p className="print-foot">
             Announcer copy · {job.action === 'save' ? 'saved' : 'printed'} {new Date().toLocaleString()}
           </p>
@@ -1849,6 +2400,7 @@ function PrintSheet({ job }) {
                 <th className="num">#</th>
                 <th>Player</th>
                 <th>Club</th>
+                {rows.some((row) => row.fours) ? <th className="num">4s</th> : null}
                 <th className="num">3s</th>
                 <th className="num">2s</th>
                 <th className="num">1s</th>
@@ -1867,6 +2419,7 @@ function PrintSheet({ job }) {
                     </span>
                   </td>
                   <td>{row.clubName}</td>
+                  {rows.some((row) => row.fours) ? <td className="num">{row.fours ?? 0}</td> : null}
                   <td className="num">{row.threes ?? 0}</td>
                   <td className="num">{row.twos ?? 0}</td>
                   <td className="num">{row.ones ?? 0}</td>
@@ -2029,6 +2582,8 @@ function SettingsPanel({ state, grade, grades }) {
                     ? 'Audience is on life members. Next/Back goes title, then one recipient at a time.'
                     : state.audienceView === 'splash'
                       ? 'Audience is on the opening splash. Next starts the medal count.'
+                    : state.audienceView === 'crowd'
+                      ? 'Audience is on crowd photos.'
                   : 'Audience is on medal count.'}
           </p>
           <div className="row">
@@ -2058,6 +2613,12 @@ function SettingsPanel({ state, grade, grades }) {
               onClick={() => api.showLifeMembers()}
             >
               Life members
+            </button>
+            <button
+              className={state.audienceView === 'crowd' ? 'primary' : ''}
+              onClick={() => api.showCrowd()}
+            >
+              Crowd photos
             </button>
             <button onClick={() => api.showScoreboard()}>Live vote count</button>
             <button onClick={() => api.showLeaderboard()}>Full leaderboard</button>
@@ -2099,13 +2660,13 @@ function SettingsPanel({ state, grade, grades }) {
           />
           <Toggle
             label="Hold slide before votes"
-            hint="Show the score first, then reveal 3-2-1"
+            hint="Show the score first, then reveal votes"
             checked={s.showVoteHoldSlide}
             onChange={(value) => setFlag('showVoteHoldSlide', value)}
           />
           <Toggle
             label="Match score on votes"
-            hint="Score tile above the 3-2-1 cards"
+            hint="Score tile above the vote cards"
             checked={s.showMatchScoreOnVotes}
             onChange={(value) => setFlag('showMatchScoreOnVotes', value)}
           />
@@ -2138,6 +2699,53 @@ function SettingsPanel({ state, grade, grades }) {
         </section>
 
         <section>
+          <h3>Crowd photos</h3>
+          <p className="muted">
+            Crowd QR, approve queue, and slideshow timing. Approve photos on the Crowd photos tab.
+          </p>
+          <SettingNumber
+            label="Hold each photo (ms)"
+            hint="How long each approved photo stays on screen (2000–60000)"
+            value={s.crowdHoldMs}
+            min={2000}
+            max={60000}
+            onCommit={(value) => setFlag('crowdHoldMs', value)}
+          />
+          <SettingNumber
+            label="Dissolve (ms)"
+            hint="Crossfade between photos (0–5000)"
+            value={s.crowdFadeMs}
+            min={0}
+            max={5000}
+            onCommit={(value) => setFlag('crowdFadeMs', value)}
+          />
+          <SettingNumber
+            label="Check for new photos (ms)"
+            hint="How often the wall looks for newly approved photos (2000–30000)"
+            value={s.crowdPollMs}
+            min={2000}
+            max={30000}
+            onCommit={(value) => setFlag('crowdPollMs', value)}
+          />
+          <SettingNumber
+            label="Max photos per phone"
+            hint="Cap on how many one sender can upload (1–200)"
+            value={s.crowdMaxPerSender}
+            min={1}
+            max={200}
+            onCommit={(value) => setFlag('crowdMaxPerSender', value)}
+          />
+          <div className="row">
+            <button onClick={() => api.pickCrowdArt()}>Pick lower third from desktop</button>
+            {state.crowd?.customArt ? (
+              <button onClick={() => api.clearCrowdArt()}>Use default lower third</button>
+            ) : null}
+            <button onClick={() => api.resetCrowdPhotoCode()}>Reset photo code</button>
+          </div>
+          <p className="muted">Photo code {s.crowdPhotoCode || '…'} never changes on this PC unless you reset it.</p>
+        </section>
+
+        <section>
           <h3>Names & medals</h3>
           <p className="muted">Override the grade button labels and medal titles shown to the audience.</p>
           {medalKeys.map((key) => (
@@ -2159,7 +2767,7 @@ function SettingsPanel({ state, grade, grades }) {
         <section>
           <h3>Live vote count</h3>
           <p className="muted">
-            Full-screen medal tally for the selected grade. It updates as 3-2-1 is entered, and sits beside each game in the presentation.
+            Full-screen medal tally for the selected grade. It updates as votes are entered, and sits beside each game in the presentation.
           </p>
           <div className="round-picks">
             {(grades ?? state.grades ?? []).map((item) => (
@@ -2198,18 +2806,18 @@ function SettingsPanel({ state, grade, grades }) {
               onClick={() => {
                 if (
                   window.confirm(
-                    'Fill 3-2-1 at random for every game, and fill Team of the year from League players? This replaces votes and TOTY picks already entered. Forfeits stay empty.'
+                    'Fill votes at random for every game (3-2-1 men, 4-3-2-1 women), and fill Team of the year from League players? This replaces votes and TOTY picks already entered. Forfeits stay empty.'
                   )
                 ) {
                   api.fillRandomVotes();
                 }
               }}
             >
-              Randomly fill 3-2-1
+              Randomly fill votes
             </button>
           </div>
           <p className="muted">
-            Random fill picks three different players from each team sheet and a full League team of the year. Use it to test the presentation or leaderboard.
+            Random fill picks 3-2-1 on men’s games, 4-3-2-1 on women’s games, and a full League team of the year. Use it to test the presentation or leaderboard.
           </p>
           <div className="row">
             <button
@@ -2274,7 +2882,7 @@ function SettingsPanel({ state, grade, grades }) {
             </div>
             <div>
               <span className="hotkey-keys"><kbd>Esc</kbd></span>
-              <span>Back to medal count from the leaderboard, live vote count, opening splash, team of the year, or life members.</span>
+              <span>Back to medal count from the leaderboard, live vote count, opening splash, team of the year, life members, or crowd photos.</span>
             </div>
             <div>
               <span className="hotkey-keys"><kbd>←</kbd> <kbd>→</kbd></span>
@@ -2385,8 +2993,7 @@ function TeamColumn({ name, logo, players, votes, nextPick, onPick }) {
       </header>
       <ul>
         {players.map((player) => {
-          const points =
-            player.id === votes?.three ? 3 : player.id === votes?.two ? 2 : player.id === votes?.one ? 1 : null;
+          const points = pointsForPlayer(votes, player.id);
           return (
             <li key={player.id}>
               <button

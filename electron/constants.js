@@ -82,6 +82,27 @@ export const EXTRA_CLUB_LOGOS = {
   'PORT FC': `${CLUB_LOGO_BASE}/Port.png`,
 };
 
+export const LEAGUE_CLUB_NAMES = [
+  'Central Augusta',
+  'Central Whyalla',
+  'North Whyalla',
+  'Roopena',
+  'South Augusta',
+  'South Whyalla',
+  'Weeroona Bay',
+  'West Augusta',
+  'West Whyalla',
+];
+
+export function displayLeagueClubName(name) {
+  const key = canonicalClubKey(name);
+  if (!key) return '';
+  const named = LEAGUE_CLUB_NAMES.find((item) => canonicalClubKey(item) === key);
+  if (named) return named;
+  if (key === 'PORT FC') return 'Port FC';
+  return '';
+}
+
 export function siteLogoFileName(clubName) {
   const key = canonicalClubKey(clubName);
   if (!key) return null;
@@ -141,9 +162,10 @@ export function womenGradeIndexesFrom(gradesList) {
 
 export function isWomenGrade(grade) {
   if (!grade) return false;
-  if (grade.women === true) return true;
-  const source = String(grade.sourceName || grade.name || '');
-  return /women/i.test(source) || Number(grade.gradeGroup) === 2;
+  if (grade.women === true || grade.women === 'true') return true;
+  if (Number(grade.gradeGroup) === 2) return true;
+  const text = `${grade.sourceName || ''} ${grade.name || ''} ${grade.medalTitle || ''} ${grade.homeName || ''} ${grade.awayName || ''}`;
+  return /women|leverington|\bwwfl\b/i.test(text);
 }
 
 export function gradesForCompetition(grades, competition) {
@@ -339,41 +361,67 @@ export function forfeitDetails(game) {
   };
 }
 
+export const MEN_VOTE_SCALE = [3, 2, 1];
+export const WOMEN_VOTE_SCALE = [4, 3, 2, 1];
+
+export function voteKeyForPoints(points) {
+  if (Number(points) === 4) return 'four';
+  if (Number(points) === 3) return 'three';
+  if (Number(points) === 2) return 'two';
+  return 'one';
+}
+
+export function voteScaleForGrade(grade, competition) {
+  if (normalizeCompetition(competition) === 'wwfl' || isWomenGrade(grade)) {
+    return WOMEN_VOTE_SCALE;
+  }
+  return MEN_VOTE_SCALE;
+}
+
+export function voteKeysForScale(scale = MEN_VOTE_SCALE) {
+  return (scale ?? MEN_VOTE_SCALE).map(voteKeyForPoints);
+}
+
 export function emptyVotes() {
-  return { three: null, two: null, one: null };
+  return { four: null, three: null, two: null, one: null };
 }
 
 export function playerAlreadyVoted(votes, playerId) {
   if (!playerId) return false;
-  return votes?.three === playerId || votes?.two === playerId || votes?.one === playerId;
+  return (
+    votes?.four === playerId ||
+    votes?.three === playerId ||
+    votes?.two === playerId ||
+    votes?.one === playerId
+  );
 }
 
-export function nextVoteKey(votes) {
-  if (!votes?.three) return 'three';
-  if (!votes?.two) return 'two';
-  if (!votes?.one) return 'one';
+export function nextVoteKey(votes, scale = MEN_VOTE_SCALE) {
+  for (const key of voteKeysForScale(scale)) {
+    if (!votes?.[key]) return key;
+  }
   return null;
 }
 
-export function applyPlayerVote(votes, playerId) {
+export function applyPlayerVote(votes, playerId, scale = MEN_VOTE_SCALE) {
   const current = { ...emptyVotes(), ...votes };
   if (!playerId) return current;
   if (playerAlreadyVoted(current, playerId)) {
-    return {
-      three: current.three === playerId ? null : current.three,
-      two: current.two === playerId ? null : current.two,
-      one: current.one === playerId ? null : current.one,
-    };
+    const next = { ...current };
+    for (const key of ['four', 'three', 'two', 'one']) {
+      if (next[key] === playerId) next[key] = null;
+    }
+    return next;
   }
-  const key = nextVoteKey(current);
+  const key = nextVoteKey(current, scale);
   if (!key) return current;
   return { ...current, [key]: playerId };
 }
 
-export function uniqueVotes(votes) {
+export function uniqueVotes(votes, scale = MEN_VOTE_SCALE) {
   const next = emptyVotes();
   const seen = new Set();
-  for (const key of ['three', 'two', 'one']) {
+  for (const key of voteKeysForScale(scale)) {
     const id = votes?.[key] ?? null;
     if (!id || seen.has(id)) continue;
     seen.add(id);
@@ -403,6 +451,13 @@ export const DEFAULT_SETTINGS = {
   liveVoteCount: 6,
   showFinals: false,
   placeholderGrandFinal: true,
+  crowdHoldMs: 6000,
+  crowdFadeMs: 900,
+  crowdPollMs: 5000,
+  crowdMaxPerSender: 30,
+  crowdPhotoCode: '',
+  crowdArtFile: null,
+  crowdArtVersion: 0,
   medalTitles: Object.fromEntries(
     Object.entries(GRADE_PROFILES).map(([key, profile]) => [key, profile.medalTitle])
   ),
@@ -417,6 +472,21 @@ export function mergeSettings(raw = {}) {
   next.leagueName = String(next.leagueName || DEFAULT_SETTINGS.leagueName).trim().slice(0, 80) || DEFAULT_SETTINGS.leagueName;
   next.leaderboardSize = Math.min(20, Math.max(3, Math.round(Number(next.leaderboardSize) || 8)));
   next.liveVoteCount = 6;
+  const clampCrowd = (value, min, max, fallback) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(n)));
+  };
+  next.crowdHoldMs = clampCrowd(next.crowdHoldMs, 2000, 60000, DEFAULT_SETTINGS.crowdHoldMs);
+  next.crowdFadeMs = clampCrowd(next.crowdFadeMs, 0, 5000, DEFAULT_SETTINGS.crowdFadeMs);
+  next.crowdPollMs = clampCrowd(next.crowdPollMs, 2000, 30000, DEFAULT_SETTINGS.crowdPollMs);
+  next.crowdMaxPerSender = clampCrowd(next.crowdMaxPerSender, 1, 200, DEFAULT_SETTINGS.crowdMaxPerSender);
+  next.crowdPhotoCode = String(next.crowdPhotoCode || '')
+    .replace(/[^a-z0-9]/gi, '')
+    .slice(0, 8)
+    .toLowerCase();
+  next.crowdArtFile = next.crowdArtFile ? String(next.crowdArtFile) : null;
+  next.crowdArtVersion = Number(next.crowdArtVersion) || 0;
   next.presentTarget = next.presentTarget === 'obs' ? 'obs' : 'display';
   next.medalTitles = { ...DEFAULT_SETTINGS.medalTitles, ...(incoming.medalTitles ?? {}) };
   next.gradeLabels = { ...DEFAULT_SETTINGS.gradeLabels, ...(incoming.gradeLabels ?? {}) };
@@ -456,7 +526,15 @@ export function overlayMedalTitle(grade, settings) {
 }
 
 export function normalizeAudienceView(value) {
-  if (value === 'scoreboard' || value === 'leaderboard' || value === 'toty' || value === 'lifemembers' || value === 'splash') {
+  if (
+    value === 'scoreboard' ||
+    value === 'leaderboard' ||
+    value === 'toty' ||
+    value === 'lifemembers' ||
+    value === 'splash' ||
+    value === 'cue' ||
+    value === 'crowd'
+  ) {
     return value;
   }
   return 'presentation';
@@ -687,6 +765,84 @@ export const RUNSHEET_SPLASH = 'splash';
 export const RUNSHEET_TOTY = 'toty';
 export const RUNSHEET_LIFE = 'lifemembers';
 
+export const RUNSHEET_GOALKICKER = 'leadingGoalkicker';
+export const GOALKICKER_BOARD_SIZE = 5;
+export const GOALKICKER_LAST_STEP = 2;
+export const AWARD_LAST_STEP = 1;
+
+export const GOALKICKER_EXTRA = {
+  id: RUNSHEET_GOALKICKER,
+  title: 'Leading Goal Kicker',
+  detail: 'Season leading goalkicker',
+  cue: 'Announce the leading goal kicker',
+  kind: 'goalkicker',
+};
+
+export const DEFAULT_NIGHT_EXTRAS = [];
+
+export const RUNSHEET_CUES = [GOALKICKER_EXTRA];
+
+export function normalizeNightExtra(raw, fallbackIndex = 0) {
+  if (!raw || typeof raw !== 'object') return null;
+  const kind =
+    raw.kind === 'award' || String(raw.id ?? '').startsWith('award-') ? 'award' : 'cue';
+  const prefix = kind === 'award' ? 'award-' : 'cue-';
+  const id = String(raw.id ?? '').trim() || `${prefix}${fallbackIndex + 1}`;
+  if (id === RUNSHEET_GOALKICKER || raw.kind === 'goalkicker') return null;
+  const title = String(raw.title ?? '').trim() || (kind === 'award' ? 'Award' : 'Guest Speaker');
+  const detail = String(raw.detail ?? '').trim();
+  const cue = String(raw.cue ?? detail).trim();
+  const playerId = String(raw.playerId ?? '').trim() || null;
+  return { id, title, detail, cue, kind, playerId };
+}
+
+export function normalizeNightExtras(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  list.forEach((item, index) => {
+    const extra = normalizeNightExtra(item, index);
+    if (!extra || seen.has(extra.id)) return;
+    seen.add(extra.id);
+    out.push(extra);
+  });
+  return out;
+}
+
+export function runsheetCue(id, extras = []) {
+  const key = String(id || '');
+  if (key === RUNSHEET_GOALKICKER) return GOALKICKER_EXTRA;
+  return (extras ?? []).find((item) => item.id === key) ?? null;
+}
+
+export function isRunsheetCueId(id) {
+  const key = String(id || '');
+  if (!key) return false;
+  if (key === RUNSHEET_GOALKICKER) return true;
+  if (key.startsWith('cue-') || key.startsWith('award-')) return true;
+  return key === 'guestSpeaker' || key === 'seasonRecap';
+}
+
+export function isGuestCueId(id) {
+  const key = String(id || '');
+  return key.startsWith('cue-') || key === 'guestSpeaker' || key === 'seasonRecap';
+}
+
+export function isAwardCue(extra) {
+  const id = extra?.id ?? extra;
+  return extra?.kind === 'award' || String(id || '').startsWith('award-');
+}
+
+export function isGoalkickerCue(extra) {
+  return extra?.kind === 'goalkicker' || extra?.id === RUNSHEET_GOALKICKER;
+}
+
+export function clampCueStep(step) {
+  const n = Math.round(Number(step) || 0);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(GOALKICKER_LAST_STEP, n);
+}
+
 export function isSplashRunsheetId(id) {
   const key = String(id || '');
   return key === RUNSHEET_SPLASH || key.startsWith(`${RUNSHEET_SPLASH}-`);
@@ -707,15 +863,23 @@ export function buildPresentationQueue(items, grades) {
     const type =
       raw?.type === 'splash' || isSplashRunsheetId(raw?.id)
         ? 'splash'
-        : raw?.type === 'toty' || raw?.id === RUNSHEET_TOTY
-          ? 'toty'
-          : raw?.type === 'lifemembers' || raw?.id === RUNSHEET_LIFE
-            ? 'lifemembers'
-            : raw?.type === 'leaderboard' || boardGradeId
-              ? 'leaderboard'
-              : 'grade';
+        : raw?.type === 'cue' || isRunsheetCueId(raw?.id)
+          ? 'cue'
+          : raw?.type === 'toty' || raw?.id === RUNSHEET_TOTY
+            ? 'toty'
+            : raw?.type === 'lifemembers' || raw?.id === RUNSHEET_LIFE
+              ? 'lifemembers'
+              : raw?.type === 'leaderboard' || boardGradeId
+                ? 'leaderboard'
+                : 'grade';
     if (type === 'splash') {
       queue.push({ type: 'splash', id: String(raw?.id || RUNSHEET_SPLASH) });
+      continue;
+    }
+    if (type === 'cue') {
+      const id = String(raw?.id || '');
+      if (!id) continue;
+      queue.push({ type: 'cue', id });
       continue;
     }
     if (type === 'toty' || type === 'lifemembers') {
@@ -743,6 +907,12 @@ export function normalizePresentationQueue(raw) {
     if (item.type === 'home') continue;
     if (item.type === 'splash') {
       queue.push({ type: 'splash', id: String(item.id || RUNSHEET_SPLASH) });
+      continue;
+    }
+    if (item.type === 'cue') {
+      const id = String(item.id || '');
+      if (!id) continue;
+      queue.push({ type: 'cue', id });
       continue;
     }
     if (item.type === 'toty' || item.type === 'lifemembers') {
@@ -776,6 +946,7 @@ export function normalizePresentationQueue(raw) {
 export function runsheetIdForQueueItem(item, slideGradeId) {
   if (!item) return null;
   if (item.type === 'splash') return item.id || RUNSHEET_SPLASH;
+  if (item.type === 'cue') return item.id || null;
   if (item.type === 'toty') return RUNSHEET_TOTY;
   if (item.type === 'lifemembers') return RUNSHEET_LIFE;
   if (item.type === 'leaderboard' && item.gradeId) return `leaderboard-${item.gradeId}`;
@@ -832,6 +1003,9 @@ export function createEmptyStore() {
     totyStep: 0,
     lifeMembers: [],
     lifeMemberStep: 0,
+    nightExtras: [],
+    cueKey: null,
+    cueStep: 0,
     presentation: {
       gradeId: null,
       gradeIds: null,

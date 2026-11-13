@@ -9,6 +9,12 @@ import {
   roundNumberFromName,
   slidesFromStartRound,
   runsheetIdForQueueItem,
+  runsheetCue,
+  isGoalkickerCue,
+  isAwardCue,
+  GOALKICKER_BOARD_SIZE,
+  clampCueStep,
+  normalizeNightExtras,
   normalizePresentationQueue,
   sortGrades,
   normalizeAudienceView,
@@ -32,35 +38,77 @@ import {
   isWflMemberClub,
   isWomenGrade,
   gradesForCompetition,
+  normalizeCompetition,
+  WOMEN_VOTE_SCALE,
+  MEN_VOTE_SCALE,
   WFL_MEMBER_CLUB_ID,
   WFL_MEMBER_CLUB_NAME,
   WFL_LOGO_FILE,
+  displayLeagueClubName,
 } from './constants.js';
 import { mediaUrl } from './store.js';
-import { buildSlides, clubLabelForVote, gradeProgress, playerName, tallyGrade } from './tally.js';
+import { crowdViewFromSettings } from './crowdPhotos.js';
+
+function crowdClubLogoUrl(venue, clubs, women) {
+  const name = displayLeagueClubName(venue) || String(venue || '').trim();
+  if (!name) return null;
+  const file =
+    logoFileForClub({ name }, clubs, { women }) || logoFileForClub({ name }, clubs, { women: false });
+  return mediaUrl('logos', file);
+}
+
+function crowdViewWithLogos(settings, clubs, women) {
+  const crowd = crowdViewFromSettings(settings);
+  const addLogo = (photo) => ({
+    ...photo,
+    logoUrl: crowdClubLogoUrl(photo.venue, clubs, women),
+  });
+  return {
+    ...crowd,
+    waiting: (crowd.waiting ?? []).map(addLogo),
+    approved: (crowd.approved ?? []).map(addLogo),
+  };
+}
+import { buildSlides, clubLabelForVote, gradeProgress, leadingGoalkicker, leadingGoalkickers, playerName, tallyGrade } from './tally.js';
 import { scoreFields } from './score.js';
 
-function rememberPlayedClub(entry, player, clubs) {
-  const club = (clubs ?? []).find((item) => item.id === player.clubId);
+function rememberPlayedClub(entry, player, clubs, women = false) {
+  const club = (clubs ?? []).find((item) => String(item.id) === String(player.clubId));
   const rawName = player.clubName || club?.name || '';
   const name = presentClubName(rawName);
   const key = canonicalClubKey(rawName) || String(player.clubId || name);
   if (!key) return;
   if (!entry.clubList) entry.clubList = [];
+  const logoFile =
+    logoFileForClub(club || { id: player.clubId, name: rawName }, clubs, { women }) ?? club?.logoFile ?? null;
   const existing = entry.clubList.findIndex((item) => item.key === key);
-  const next = {
-    key,
-    id: player.clubId || club?.id || null,
-    name,
-    logoFile: logoFileForClub(club || { id: player.clubId, name: rawName }, clubs) ?? club?.logoFile ?? null,
-  };
-  if (existing >= 0) entry.clubList.splice(existing, 1);
-  entry.clubList.push(next);
-  const last = entry.clubList[entry.clubList.length - 1];
-  entry.clubId = last.id;
-  entry.clubName = entry.clubList.map((item) => item.name).filter(Boolean).join(' / ');
-  entry.themeClubName = last.name;
-  entry.logoFile = last.logoFile ?? entry.logoFile ?? null;
+  if (existing >= 0) {
+    const item = entry.clubList[existing];
+    item.n += 1;
+    if (player.clubId) item.id = player.clubId || club?.id || item.id;
+    if (name) item.name = name;
+    if (women) {
+      item.women = true;
+      item.logoFile = logoFile || item.logoFile;
+    } else if (!item.logoFile) {
+      item.logoFile = logoFile;
+    }
+  } else {
+    entry.clubList.push({
+      key,
+      id: player.clubId || club?.id || null,
+      name,
+      logoFile,
+      n: 1,
+      women,
+    });
+  }
+  const home = entry.clubList.reduce((best, item) => (!best || item.n > best.n ? item : best), null);
+  if (!home) return;
+  entry.clubId = home.id;
+  entry.clubName = home.name;
+  entry.themeClubName = home.name;
+  entry.logoFile = home.logoFile ?? entry.logoFile ?? null;
 }
 
 function collectRoster(grades, clubs) {
@@ -71,12 +119,13 @@ function collectRoster(grades, clubs) {
         for (const player of game.players ?? []) {
           if (!player?.id) continue;
           let current = map.get(player.id);
+          const name = playerName(player);
           if (!current) {
             current = {
               id: player.id,
               firstName: player.firstName,
               lastName: player.lastName,
-              name: playerName(player),
+              name,
               number: player.number || '',
               clubId: null,
               clubName: '',
@@ -93,11 +142,16 @@ function collectRoster(grades, clubs) {
               current.gradeIds.push(grade.id);
               current.gradeNames.push(grade.name);
             }
-            if (!current.photoFile && player.photoFile) current.photoFile = player.photoFile;
-            if (!current.number && player.number) current.number = player.number;
-            if (!current.position && player.position) current.position = player.position;
+            if (name && name !== 'Private Player') {
+              current.name = name;
+              if (player.firstName) current.firstName = player.firstName;
+              if (player.lastName) current.lastName = player.lastName;
+            }
+            if (player.photoFile) current.photoFile = player.photoFile;
+            if (player.number) current.number = player.number;
+            if (player.position) current.position = player.position;
           }
-          rememberPlayedClub(current, player, clubs);
+          rememberPlayedClub(current, player, clubs, isWomenGrade(grade));
         }
       }
     }
@@ -385,6 +439,173 @@ function lifeMembersView(store, roster, clubs) {
   };
 }
 
+function goalkickerRowView(row, clubs, women = false) {
+  if (!row) return null;
+  const club = (clubs ?? []).find((item) => item.id === row.clubId) ?? { id: row.clubId, name: row.clubName };
+  return {
+    ...row,
+    photoUrl: mediaUrl('photos', row.photoFile),
+    logoUrl: mediaUrl('logos', logoFileForClub(club, clubs, { women }) || row.logoFile),
+  };
+}
+
+function leadingGoalkickerBoardView(grades, clubs, settings, women = false) {
+  return leadingGoalkickers(grades, clubs, settings, GOALKICKER_BOARD_SIZE)
+    .map((row) => goalkickerRowView(row, clubs, women))
+    .filter(Boolean);
+}
+
+function leadingGoalkickerView(grades, clubs, settings, women = false) {
+  return goalkickerRowView(leadingGoalkicker(grades, clubs, settings), clubs, women);
+}
+
+function findAwardPlayer(playerId, grades, clubs, women = false) {
+  const id = String(playerId || '').trim();
+  if (!id) return null;
+  const clubsById = new Map((clubs ?? []).map((club) => [String(club.id), club]));
+  const clubCounts = new Map();
+  let latest = null;
+  let photoFile = null;
+  let number = '';
+  let position = '';
+  for (const grade of grades ?? []) {
+    const gradeWomen = women || isWomenGrade(grade);
+    for (const round of grade.rounds ?? []) {
+      for (const game of round.games ?? []) {
+        const player = (game.players ?? []).find((item) => String(item.id) === id);
+        if (!player) continue;
+        const club = clubsById.get(String(player.clubId || '')) ?? null;
+        const rawName = player.clubName || club?.name || '';
+        const key = canonicalClubKey(rawName) || String(player.clubId || rawName);
+        if (key) {
+          const current = clubCounts.get(key) ?? {
+            n: 0,
+            id: player.clubId || club?.id || null,
+            name: rawName,
+            women: gradeWomen,
+          };
+          current.n += 1;
+          if (player.clubId) current.id = player.clubId || club?.id || current.id;
+          if (rawName) current.name = rawName;
+          current.women = current.women || gradeWomen;
+          clubCounts.set(key, current);
+        }
+        if (player.photoFile) photoFile = player.photoFile;
+        if (player.number) number = player.number;
+        if (player.position) position = player.position;
+        latest = { player, club, women: gradeWomen };
+      }
+    }
+  }
+  if (!latest) return null;
+  const home = [...clubCounts.values()].reduce((best, item) => (!best || item.n > best.n ? item : best), null);
+  const club =
+    clubsById.get(String(home?.id || latest.player.clubId || '')) ||
+    latest.club ||
+    { id: home?.id || latest.player.clubId, name: home?.name || latest.player.clubName };
+  const clubName = presentClubName(home?.name || latest.player.clubName || club?.name || '');
+  const womenLogo = home?.women || latest.women || women;
+  return {
+    id: latest.player.id,
+    name: playerName(latest.player),
+    firstName: latest.player.firstName || '',
+    lastName: latest.player.lastName || '',
+    number: number || latest.player.number || '',
+    clubId: club?.id || home?.id || latest.player.clubId || null,
+    clubName,
+    themeClubName: clubName,
+    position,
+    photoUrl: mediaUrl('photos', photoFile || latest.player.photoFile),
+    logoUrl: mediaUrl(
+      'logos',
+      logoFileForClub(club, clubs, { women: womenLogo }) || club?.logoFile
+    ),
+  };
+}
+
+function awardWinnerFrom(meta, roster, grades, clubs, women = false) {
+  const playerId = String(meta?.playerId || '').trim();
+  const fromGames = playerId ? findAwardPlayer(playerId, grades, clubs, women) : null;
+  if (fromGames) return fromGames;
+  const player = playerId
+    ? (roster ?? []).find((row) => String(row.id) === playerId)
+    : null;
+  if (player) {
+    const clubName = presentClubName(player.clubName);
+    return {
+      id: player.id,
+      name: playerName(player) !== 'Private Player' ? playerName(player) : player.name,
+      clubName,
+      clubId: player.clubId,
+      number: player.number || '',
+      photoUrl: player.photoUrl ?? mediaUrl('photos', player.photoFile),
+      logoUrl:
+        player.logoUrl ??
+        mediaUrl('logos', logoFileForClub(player, clubs, { women }) || player.logoFile),
+      themeClubName: presentClubName(player.themeClubName || player.clubName),
+    };
+  }
+  const name = String(meta?.detail || '').trim();
+  if (!name) return null;
+  return {
+    name,
+    clubName: '',
+    photoUrl: null,
+    logoUrl: null,
+  };
+}
+
+function cueView(store, grades, clubs, settings, women = false, roster = []) {
+  const queue = normalizePresentationQueue(store.presentation?.queue);
+  const queueItem = queue[store.presentation?.queueIndex ?? 0];
+  const id =
+    store.audienceView === 'cue'
+      ? store.cueKey || queueItem?.id || queueItem?.type
+      : store.cueKey || queueItem?.id;
+  const extras = normalizeNightExtras(store.nightExtras);
+  const meta = runsheetCue(id, extras);
+  const board = leadingGoalkickerBoardView(grades, clubs, settings, women);
+  const winner = board[0] ?? leadingGoalkickerView(grades, clubs, settings, women);
+  if (!meta) {
+    return {
+      id: id || null,
+      title: 'Run sheet',
+      detail: '',
+      cue: '',
+      kind: 'cue',
+      step: 0,
+      revealed: true,
+      board,
+      winner,
+    };
+  }
+  const goalkicker = isGoalkickerCue(meta);
+  const award = isAwardCue(meta);
+  const step = goalkicker || award ? clampCueStep(store.cueStep) : 0;
+  const revealed = !(goalkicker || award) || step >= 1;
+  const awardWinner = award
+    ? awardWinnerFrom(meta, roster, store.grades ?? grades, clubs, women)
+    : null;
+  return {
+    id: meta.id,
+    title: meta.title,
+    detail:
+      goalkicker && step >= 2
+        ? 'Top 5'
+        : goalkicker && revealed && winner
+          ? `${winner.name} · ${winner.goals} ${winner.goals === 1 ? 'goal' : 'goals'}`
+          : award && !revealed
+            ? ''
+            : awardWinner?.name || meta.detail,
+    cue: meta.cue,
+    kind: meta.kind,
+    step,
+    revealed,
+    board: goalkicker ? board : [],
+    winner: goalkicker && revealed ? winner : award && revealed ? awardWinner : null,
+  };
+}
+
 export function applyPresentationCursor(full, store) {
   const slides = full.presentation?.slides ?? [];
   const slideIndex = Math.min(store.presentation?.slideIndex ?? 0, Math.max(0, slides.length - 1));
@@ -401,11 +622,13 @@ export function applyPresentationCursor(full, store) {
     runsheetIdForQueueItem(queueItem, slides[slideIndex]?.gradeId) ||
     (audienceView === 'splash'
       ? 'splash'
-      : audienceView === 'toty'
-        ? 'toty'
-        : audienceView === 'lifemembers'
-          ? 'lifemembers'
-          : full.presentation?.gradeId ?? null);
+      : audienceView === 'cue'
+        ? store.cueKey || queueItem?.id || 'cue'
+        : audienceView === 'toty'
+          ? 'toty'
+          : audienceView === 'lifemembers'
+            ? 'lifemembers'
+            : full.presentation?.gradeId ?? null);
 
   return {
     ...full,
@@ -440,6 +663,44 @@ export function applyPresentationCursor(full, store) {
           current: lifeBeat?.type === 'member' ? members[lifeBeat.index] ?? null : null,
         }
       : full.lifeMembers,
+    cue: (() => {
+      const extras = full.nightExtras ?? normalizeNightExtras(store.nightExtras);
+      const meta = runsheetCue(store.cueKey || queueItem?.id, extras);
+      const board = full.leadingGoalkickerBoard ?? full.cue?.board ?? [];
+      const winner = board[0] ?? full.leadingGoalkicker ?? full.cue?.winner ?? null;
+      if (!meta) return full.cue;
+      const goalkicker = isGoalkickerCue(meta);
+      const award = isAwardCue(meta);
+      const step = goalkicker || award ? clampCueStep(store.cueStep) : 0;
+      const revealed = !(goalkicker || award) || step >= 1;
+      const awardWinner = award
+        ? awardWinnerFrom(
+            meta,
+            full.roster,
+            store.grades ?? full.grades,
+            full.clubs,
+            normalizeCompetition(store.competition) === 'wwfl'
+          )
+        : null;
+      return {
+        id: meta.id,
+        title: meta.title,
+        detail:
+          goalkicker && step >= 2
+            ? 'Top 5'
+            : goalkicker && revealed && winner
+              ? `${winner.name} · ${winner.goals} ${winner.goals === 1 ? 'goal' : 'goals'}`
+              : award && !revealed
+                ? ''
+                : awardWinner?.name || meta.detail,
+        cue: meta.cue,
+        kind: meta.kind,
+        step,
+        revealed,
+        board: goalkicker ? board : [],
+        winner: goalkicker && revealed ? winner : award && revealed ? awardWinner : null,
+      };
+    })(),
   };
 }
 
@@ -560,9 +821,31 @@ function roundNumbersFromSlides(slides) {
   return seen;
 }
 
-function decorateSlides(rawSlides, sponsors) {
-  return (rawSlides ?? []).map((slide) => ({
+function slideUsesWomenVotes(slide) {
+  if (!slide || slide.type !== 'votes') return false;
+  if (slide.women === true || slide.competition === 'wwfl') return true;
+  if ((slide.voteScale ?? []).includes(4)) return true;
+  if ((slide.picks ?? []).some((pick) => Number(pick.points) === 4)) return true;
+  return /women|leverington|\bwwfl\b/i.test(
+    `${slide.medalTitle || ''} ${slide.gradeName || ''} ${slide.homeName || ''} ${slide.awayName || ''}`
+  );
+}
+
+function forceWomenVoteScale(slide, competition) {
+  if (!slide || slide.type !== 'votes') return slide;
+  const wwfl = normalizeCompetition(competition) === 'wwfl' || slide.competition === 'wwfl';
+  const women = wwfl || slideUsesWomenVotes(slide);
+  return {
     ...slide,
+    women,
+    competition: wwfl ? 'wwfl' : slide.competition || competition || null,
+    voteScale: women ? [...WOMEN_VOTE_SCALE] : [...(slide.voteScale?.length ? slide.voteScale : MEN_VOTE_SCALE)],
+  };
+}
+
+function decorateSlides(rawSlides, sponsors, competition) {
+  return (rawSlides ?? []).map((slide) => ({
+    ...forceWomenVoteScale(slide, competition),
     sponsors: pickSponsorsForPage(
       sponsors,
       [slide.gradeId, slide.roundId || slide.roundName || slide.type].join(':')
@@ -626,7 +909,7 @@ function decorateSlides(rawSlides, sponsors) {
 
 export function decorateState(store, paths) {
   const settings = mergeSettings(store.settings);
-  const womenComp = store.competition === 'wwfl';
+  const womenComp = normalizeCompetition(store.competition) === 'wwfl';
   const rawClubs = store.clubs ?? [];
   const clubs = rawClubs.map((club) => {
     const logoFile = logoFileForClub(club, rawClubs, { women: womenComp });
@@ -689,8 +972,11 @@ export function decorateState(store, paths) {
     name: grade.name,
     medalTitle: grade.medalTitle,
     slides: decorateSlides(
-      buildSlides(grade, clubsForGrade(rawClubs, grade), store.sponsors, settings),
-      sponsors
+      buildSlides(grade, clubsForGrade(rawClubs, grade), store.sponsors, settings, {
+        competition: store.competition,
+      }),
+      sponsors,
+      store.competition
     ),
   });
   const allDecks = allGrades.map(deckFor);
@@ -708,8 +994,12 @@ export function decorateState(store, paths) {
     const grade = allGrades.find((item) => item.id === gradeId);
     if (!grade) return [];
     return decorateSlides(
-      buildSlides(grade, clubsForGrade(rawClubs, grade), store.sponsors, settings, { fromRound: starts[gradeId] }),
-      sponsors
+      buildSlides(grade, clubsForGrade(rawClubs, grade), store.sponsors, settings, {
+        fromRound: starts[gradeId],
+        competition: store.competition,
+      }),
+      sponsors,
+      store.competition
     );
   };
   const slides = slidesFromStartRound(presoSlidesFor(presentationGrade?.id), starts[presentationGrade?.id]);
@@ -752,32 +1042,28 @@ export function decorateState(store, paths) {
         ) ||
         (store.audienceView === 'splash'
           ? 'splash'
-          : store.audienceView === 'toty'
-            ? 'toty'
-            : store.audienceView === 'lifemembers'
-              ? 'lifemembers'
-              : presentationGrade?.id ?? null),
+          : store.audienceView === 'cue'
+            ? store.cueKey || queueItem?.id || 'cue'
+            : store.audienceView === 'toty'
+              ? 'toty'
+              : store.audienceView === 'lifemembers'
+                ? 'lifemembers'
+                : presentationGrade?.id ?? null),
       slides,
       current: currentSlide,
       decks: decks.map(summarizeDeck),
       allDecks: allDecks.map(summarizeDeck),
     },
-    scoreboard: scoreboardView(
-      store,
-      clubs,
-      settings,
-      sponsors,
-      currentSlide,
-      womenComp &&
-      (store.scoreboard?.leaderboardScope === 'grade' || store.scoreboard?.leaderboardScope === 'current')
-        ? allGrades
-        : grades,
-      womenComp ? allGrades : grades
-    ),
+    scoreboard: scoreboardView(store, clubs, settings, sponsors, currentSlide, grades),
     roster,
     toty: totyView(store, roster, grades),
     lifeMembers: lifeMembersView(store, roster, clubs),
     splash: splashView(store, grades, clubs, settings, paths.logos),
+    cue: cueView(store, grades, clubs, settings, womenComp, roster),
+    nightExtras: normalizeNightExtras(store.nightExtras),
+    leadingGoalkickerBoard: leadingGoalkickerBoardView(grades, clubs, settings, womenComp),
+    leadingGoalkicker: leadingGoalkickerView(grades, clubs, settings, womenComp),
+    crowd: crowdViewWithLogos(settings, clubs, womenComp),
     settings,
     sync: store.sync,
     wflLogoUrl: existsSync(join(paths.logos, 'wfl-logo.svg'))
@@ -797,6 +1083,7 @@ export function audienceFromState(full) {
   const slideIndex = full.presentation?.slideIndex ?? 0;
   const base = {
     season: full.season,
+    competition: full.competition,
     wflLogoUrl: full.wflLogoUrl,
     audienceView: view,
     settings: full.settings,
@@ -826,13 +1113,23 @@ export function audienceFromState(full) {
   if (view === 'splash') {
     return { ...base, splash: full.splash };
   }
+  if (view === 'cue') {
+    return { ...base, cue: full.cue };
+  }
+  if (view === 'crowd') {
+    return { ...base, crowd: full.crowd };
+  }
+  const current = forceWomenVoteScale(
+    full.presentation?.current ?? slides[slideIndex] ?? null,
+    full.competition
+  );
   return {
     ...base,
     presentation: {
       slideIndex,
-      current: full.presentation?.current ?? slides[slideIndex] ?? null,
+      current,
       runCurrent: full.presentation?.runCurrent ?? null,
-      peek: slides.slice(slideIndex + 1, slideIndex + 3),
+      peek: slides.slice(slideIndex + 1, slideIndex + 3).map((slide) => forceWomenVoteScale(slide, full.competition)),
     },
   };
 }

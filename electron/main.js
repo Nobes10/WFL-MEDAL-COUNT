@@ -14,12 +14,27 @@ import { copyFileSync, existsSync, readdirSync, unlinkSync, writeFileSync } from
 import { basename, extname, join } from 'path';
 import { printDocument } from './print.js';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, TOTY_POSITIONS, TOTY_POSITION_IDS, leagueGradeFrom, totyGradeFrom, clampTotyStep, clampLifeMemberStep, normalizeLifeMembers, TOTY_BEATS, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition } from './constants.js';
+import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, TOTY_POSITIONS, TOTY_POSITION_IDS, leagueGradeFrom, totyGradeFrom, clampTotyStep, clampLifeMemberStep, clampCueStep, GOALKICKER_LAST_STEP, AWARD_LAST_STEP, normalizeLifeMembers, normalizeNightExtra, normalizeNightExtras, TOTY_BEATS, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition, isGoalkickerCue, isAwardCue, voteScaleForGrade, voteKeyForPoints, LEAGUE_CLUB_NAMES, canonicalClubKey, displayLeagueClubName } from './constants.js';
 import { playerName } from './tally.js';
 import { ensureStoreDirs, installClubLogoOverrides, loadStore, saveStore, storePaths } from './store.js';
 import { syncSeason, refreshFixtureScores, ensureWebsiteClubLogos, applyClubLogoFiles } from './sync.js';
 import { applyPresentationCursor, audienceFromState, decorateState } from './view.js';
 import { broadcastObs, startObsServer } from './obs.js';
+import { startCrowdServer } from './crowdServer.js';
+import { enableDirectorFunnel } from './tailscale.js';
+import {
+  approveAllPhotos,
+  approvePhoto,
+  artFilePath,
+  clearCustomArt,
+  denyPhoto,
+  importCrowdFiles,
+  lanAddresses,
+  makePhotoCode,
+  photoPath,
+  photosRoot,
+  setCustomArtFromPath,
+} from './crowdPhotos.js';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -39,6 +54,11 @@ const isDev = Boolean(process.env.ELECTRON_DEV);
 let mainWindow = null;
 let audienceWindow = null;
 let obsPage = null;
+let crowdPage = null;
+let crowdShareBase = '';
+let funnelUrl = '';
+let funnelRetryTimer = null;
+let funnelState = { status: '', message: '', url: null, busy: false };
 let store = null;
 let paths = null;
 
@@ -101,11 +121,71 @@ function applyAudienceWindowSettings() {
   audienceWindow.setFullScreen(settings.audienceFullscreen !== false);
 }
 
+function crowdClubNames() {
+  const wwfl = normalizeCompetition(store?.competition) === 'wwfl';
+  if (!wwfl) return [...LEAGUE_CLUB_NAMES];
+  const found = new Map();
+  for (const grade of gradesForCompetition(store?.grades, 'wwfl')) {
+    for (const round of grade.rounds ?? []) {
+      for (const game of round.games ?? []) {
+        for (const raw of [game.homeName, game.awayName]) {
+          const key = canonicalClubKey(raw);
+          if (!key || key === 'CENTRAL WHYALLA' || key === 'HOME' || key === 'AWAY') continue;
+          const label = displayLeagueClubName(raw);
+          if (!label) continue;
+          found.set(key, label);
+        }
+      }
+    }
+  }
+  if (found.size) return [...found.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  return LEAGUE_CLUB_NAMES.filter((name) => canonicalClubKey(name) !== 'CENTRAL WHYALLA');
+}
+
+function crowdVenues() {
+  const wwfl = normalizeCompetition(store?.competition) === 'wwfl';
+  const clubs = store?.clubs ?? [];
+  return crowdClubNames().map((name) => {
+    const file =
+      logoFileForClub({ name }, clubs, { women: wwfl }) ||
+      logoFileForClub({ name }, clubs, { women: false });
+    return {
+      name,
+      logo: file ? `/club-logo/${encodeURIComponent(file)}` : '',
+    };
+  });
+}
+
+function crowdShareInfo() {
+  const port = crowdPage?.port;
+  const bases = [];
+  if (funnelUrl) bases.push(funnelUrl);
+  if (port) {
+    for (const ip of lanAddresses()) bases.push(`http://${ip}:${port}`);
+    bases.push(`http://127.0.0.1:${port}`);
+  }
+  const unique = [...new Set(bases)];
+  const base = unique.includes(crowdShareBase) ? crowdShareBase : unique[0] || '';
+  return {
+    port: port ?? null,
+    shareBases: unique,
+    shareBase: base,
+    shareUrl: base ? `${base}/` : '',
+    anywhereReady: Boolean(funnelUrl),
+    anywhereBusy: Boolean(funnelState.busy),
+    anywhereNote: funnelState.message || '',
+  };
+}
+
 function withWindowState(state) {
   return {
     ...state,
     audienceOpen: Boolean(audienceWindow && !audienceWindow.isDestroyed()),
     obsUrl: obsPage?.url ?? null,
+    crowd: {
+      ...(state.crowd ?? {}),
+      ...crowdShareInfo(),
+    },
   };
 }
 
@@ -162,6 +242,18 @@ function presentationCursorPatch(full) {
       current: full.lifeMembers?.current ?? null,
       totalSteps: full.lifeMembers?.totalSteps ?? 0,
     },
+    cue: full.cue
+      ? {
+          id: full.cue.id ?? null,
+          title: full.cue.title ?? '',
+          detail: full.cue.detail ?? '',
+          kind: full.cue.kind ?? 'cue',
+          step: full.cue.step ?? 0,
+          revealed: Boolean(full.cue.revealed),
+          board: full.cue.board ?? [],
+          winner: full.cue.winner ?? null,
+        }
+      : full.cue,
     ...(full.audienceView === 'leaderboard'
       ? {
           scoreboard: {
@@ -194,6 +286,80 @@ function emitState({ cheap = false } = {}) {
   return control;
 }
 
+function stopFunnelRetry() {
+  if (!funnelRetryTimer) return;
+  clearInterval(funnelRetryTimer);
+  funnelRetryTimer = null;
+}
+
+let funnelSetupRunning = false;
+
+async function setupCrowdAnywhere(port, { openLinks = true } = {}) {
+  if (!port || funnelSetupRunning) return funnelState;
+  funnelSetupRunning = true;
+  funnelState = {
+    status: 'starting',
+    message: 'Setting up access from anywhere…',
+    url: null,
+    busy: true,
+  };
+  emitState();
+  try {
+    const result = await enableDirectorFunnel(port);
+    if (openLinks && result.enableUrl) {
+      try {
+        await shell.openExternal(result.enableUrl);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (openLinks && result.installUrl && result.status === 'missing') {
+      try {
+        await shell.openExternal(result.installUrl);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (result.url) {
+      funnelUrl = String(result.url).replace(/\/$/, '');
+      crowdShareBase = funnelUrl;
+      funnelState = {
+        status: 'ready',
+        message: result.message || 'Works from anywhere, on any phone.',
+        url: funnelUrl,
+        busy: false,
+      };
+      stopFunnelRetry();
+    } else {
+      funnelState = {
+        status: result.status || 'failed',
+        message: result.message || 'Could not turn on anywhere access.',
+        url: null,
+        busy: false,
+        installUrl: result.installUrl,
+        enableUrl: result.enableUrl,
+        adminUrl: result.adminUrl,
+      };
+      if (result.status !== 'missing' && !funnelRetryTimer) {
+        let attempts = 0;
+        funnelRetryTimer = setInterval(() => {
+          if (funnelUrl || funnelSetupRunning) return;
+          attempts += 1;
+          if (attempts > 36) {
+            stopFunnelRetry();
+            return;
+          }
+          void setupCrowdAnywhere(port, { openLinks: false });
+        }, 8000);
+      }
+    }
+    emitState();
+    return funnelState;
+  } finally {
+    funnelSetupRunning = false;
+  }
+}
+
 function presoSlideCount() {
   if (decoratedCache) return decoratedCache.presentation?.slides?.length ?? 0;
   if (lastSlideCount > 0) return lastSlideCount;
@@ -220,6 +386,18 @@ function activateQueueItem(index, { atEnd = false } = {}) {
   stopScoreboardLive();
   if (item.type === 'splash') {
     store.audienceView = 'splash';
+    return true;
+  }
+  if (item.type === 'cue') {
+    store.audienceView = 'cue';
+    store.cueKey = item.id;
+    store.cueStep = atEnd
+      ? isGoalkickerCue({ id: item.id })
+        ? GOALKICKER_LAST_STEP
+        : isAwardCue({ id: item.id })
+          ? AWARD_LAST_STEP
+          : 0
+      : 0;
     return true;
   }
   if (item.type === 'toty') {
@@ -265,6 +443,7 @@ function syncQueueToView(view) {
   store.presentation.queue = queue;
   const index = queue.findIndex((item) => {
     if (view === 'splash') return item.type === 'splash';
+    if (view === 'cue') return item.type === 'cue' && item.id === store.cueKey;
     if (view === 'toty') return item.type === 'toty';
     if (view === 'lifemembers') return item.type === 'lifemembers';
     return item.type === 'preso';
@@ -277,9 +456,9 @@ function controlUrl() {
 }
 
 function audienceUrl() {
-  return isDev
-    ? 'http://localhost:5173/audience.html'
-    : pathToFileURL(join(__dirname, '../dist/audience.html')).toString();
+  const bust = `t=${Date.now()}`;
+  if (isDev) return `http://localhost:5173/audience.html?${bust}`;
+  return `${pathToFileURL(join(__dirname, '../dist/audience.html')).toString()}?${bust}`;
 }
 
 function windowIcon() {
@@ -396,8 +575,21 @@ app.whenReady().then(() => {
 
   protocol.handle('medal', async (request) => {
     const url = new URL(request.url);
-    const fileName = decodeURIComponent(url.pathname.replace(/^\//, ''));
-    const filePath = dataPath(url.hostname, fileName);
+    let filePath = null;
+    if (url.hostname === 'crowd') {
+      const rest = decodeURIComponent(url.pathname.replace(/^\//, ''));
+      if (rest === 'art' || rest.startsWith('art')) {
+        filePath = artFilePath(currentSettings());
+      } else {
+        const slash = rest.indexOf('/');
+        const which = slash >= 0 ? rest.slice(0, slash) : rest;
+        const file = slash >= 0 ? rest.slice(slash + 1) : '';
+        filePath = photoPath(which, file);
+      }
+    } else {
+      const fileName = decodeURIComponent(url.pathname.replace(/^\//, ''));
+      filePath = dataPath(url.hostname, fileName);
+    }
     if (!filePath || !existsSync(filePath)) {
       return new Response('Not found', { status: 404 });
     }
@@ -405,8 +597,17 @@ app.whenReady().then(() => {
     const headers = new Headers(response.headers);
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    headers.set('Cache-Control', 'no-store');
     return new Response(response.body, { status: response.status, headers });
   });
+
+  if (!currentSettings().crowdPhotoCode) {
+    store.settings = mergeSettings({
+      ...currentSettings(),
+      crowdPhotoCode: makePhotoCode(),
+    });
+    persist();
+  }
 
   ipcMain.handle('get-state', () => withWindowState(currentDecorated()));
   ipcMain.handle('get-audience-state', () => audienceFromState(currentDecorated()));
@@ -460,7 +661,7 @@ app.whenReady().then(() => {
       ...emptyVotes(),
       ...found.game.votes,
       ...votes,
-    });
+    }, voteScaleForGrade(found.grade));
     persist();
     return emitState();
   });
@@ -468,7 +669,7 @@ app.whenReady().then(() => {
   ipcMain.handle('assign-vote', (_event, gameId, playerId) => {
     const found = findGame(gameId);
     if (!found || isForfeitGame(found.game)) return decorateState(store, paths);
-    found.game.votes = applyPlayerVote(found.game.votes, playerId);
+    found.game.votes = applyPlayerVote(found.game.votes, playerId, voteScaleForGrade(found.grade));
     persist();
     return emitState();
   });
@@ -533,11 +734,12 @@ app.whenReady().then(() => {
         for (const game of round.games ?? []) {
           if (isForfeitGame(game)) continue;
           const ids = shuffle([...new Set((game.players ?? []).map((player) => player?.id).filter(Boolean))]);
-          game.votes = uniqueVotes({
-            three: ids[0] ?? null,
-            two: ids[1] ?? null,
-            one: ids[2] ?? null,
+          const scale = voteScaleForGrade(grade);
+          const filled = emptyVotes();
+          scale.forEach((points, index) => {
+            filled[voteKeyForPoints(points)] = ids[index] ?? null;
           });
+          game.votes = uniqueVotes(filled, scale);
         }
       }
     }
@@ -690,6 +892,94 @@ app.whenReady().then(() => {
     return emitState();
   });
 
+  ipcMain.handle('show-crowd', () => {
+    store.audienceView = 'crowd';
+    stopScoreboardLive();
+    persist();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
+    return emitState();
+  });
+
+  ipcMain.handle('set-crowd-share-base', (_event, base) => {
+    crowdShareBase = String(base || '');
+    return emitState();
+  });
+
+  ipcMain.handle('approve-crowd-photo', (_event, file) => {
+    approvePhoto(file);
+    return emitState();
+  });
+
+  ipcMain.handle('deny-crowd-photo', (_event, file) => {
+    denyPhoto(file);
+    return emitState();
+  });
+
+  ipcMain.handle('approve-all-crowd-photos', () => {
+    approveAllPhotos();
+    return emitState();
+  });
+
+  ipcMain.handle('import-crowd-photos', async () => {
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Add crowd photos',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+    });
+    if (!picked.canceled && picked.filePaths?.length) {
+      importCrowdFiles(picked.filePaths, { from: 'Desk', venue: '' });
+    }
+    return emitState();
+  });
+
+  ipcMain.handle('pick-crowd-art', async () => {
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Lower third image',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+    });
+    if (!picked.canceled && picked.filePaths?.[0]) {
+      const next = setCustomArtFromPath(picked.filePaths[0]);
+      store.settings = mergeSettings({
+        ...currentSettings(),
+        crowdArtFile: next.artFile,
+        crowdArtVersion: next.artVersion,
+      });
+      persist();
+    }
+    return emitState();
+  });
+
+  ipcMain.handle('clear-crowd-art', () => {
+    const next = clearCustomArt(currentSettings());
+    store.settings = mergeSettings({
+      ...currentSettings(),
+      crowdArtFile: next.artFile,
+      crowdArtVersion: next.artVersion,
+    });
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('open-crowd-folder', () => {
+    shell.openPath(photosRoot());
+    return true;
+  });
+
+  ipcMain.handle('reset-crowd-photo-code', () => {
+    store.settings = mergeSettings({
+      ...currentSettings(),
+      crowdPhotoCode: makePhotoCode(),
+    });
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('enable-crowd-anywhere', async () => {
+    await setupCrowdAnywhere(crowdPage?.port);
+    return emitState();
+  });
+
   ipcMain.handle('show-toty', (_event, restart) => {
     store.audienceView = 'toty';
     if (restart) store.totyStep = 0;
@@ -714,6 +1004,44 @@ app.whenReady().then(() => {
     const id = sponsorId ? String(sponsorId) : '';
     const exists = (store.sponsors ?? []).some((item) => String(item.id) === id);
     store.totySponsorId = exists ? id : null;
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('add-night-extra', (_event, payload) => {
+    const extras = normalizeNightExtras(store.nightExtras);
+    const kind = payload?.kind === 'award' || String(payload?.id || '').startsWith('award-') ? 'award' : 'cue';
+    const prefix = kind === 'award' ? 'award-' : 'cue-';
+    const requested = String(payload?.id || '').trim();
+    const extra = normalizeNightExtra({
+      id: requested.startsWith(prefix) ? requested : `${prefix}${randomUUID().slice(0, 8)}`,
+      title: payload?.title || (kind === 'award' ? 'Award' : 'Guest Speaker'),
+      detail: payload?.detail || '',
+      cue: payload?.cue || payload?.detail || '',
+      kind,
+      playerId: payload?.playerId || null,
+    }, extras.length);
+    if (extra) extras.push(extra);
+    store.nightExtras = extras;
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('update-night-extra', (_event, extraId, patch) => {
+    const id = String(extraId || '');
+    const extras = normalizeNightExtras(store.nightExtras);
+    store.nightExtras = extras.map((item) => {
+      if (item.id !== id) return item;
+      return normalizeNightExtra({ ...item, ...(patch && typeof patch === 'object' ? patch : {}), id }, 0) || item;
+    });
+    persistSoon();
+    return emitState();
+  });
+
+  ipcMain.handle('remove-night-extra', (_event, extraId) => {
+    const id = String(extraId || '');
+    store.nightExtras = normalizeNightExtras(store.nightExtras).filter((item) => item.id !== id);
+    if (store.cueKey === id) store.cueKey = store.nightExtras[0]?.id ?? null;
     persist();
     return emitState();
   });
@@ -775,7 +1103,30 @@ app.whenReady().then(() => {
       return emitState({ cheap: Boolean(decoratedCache) });
     }
 
-    if (store.audienceView === 'leaderboard' && store.scoreboard?.leaderboardScope === 'grade') {
+    if (store.audienceView === 'cue') {
+      const queue = normalizePresentationQueue(store.presentation?.queue);
+      const index = Math.min(Math.max(0, store.presentation.queueIndex ?? 0), Math.max(0, queue.length - 1));
+      const cueId = store.cueKey || queue[index]?.id;
+      if (isGoalkickerCue({ id: cueId }) || isAwardCue({ id: cueId })) {
+        const last = isGoalkickerCue({ id: cueId }) ? GOALKICKER_LAST_STEP : AWARD_LAST_STEP;
+        const step = clampCueStep(store.cueStep);
+        if (amount > 0 && step < last) {
+          store.cueStep = step + 1;
+          persistSoon();
+          return emitState({ cheap: Boolean(decoratedCache) });
+        }
+        if (amount < 0 && step > 0) {
+          store.cueStep = step - 1;
+          persistSoon();
+          return emitState({ cheap: Boolean(decoratedCache) });
+        }
+      }
+      if (!stepRunsheet(amount)) store.audienceView = 'cue';
+      persistSoon();
+      return emitState({ cheap: Boolean(decoratedCache) });
+    }
+
+    if (store.audienceView === 'leaderboard') {
       stepRunsheet(amount);
       persistSoon();
       return emitState({ cheap: Boolean(decoratedCache) });
@@ -1136,7 +1487,8 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('reset-settings', () => {
-    store.settings = mergeSettings({});
+    const photoCode = currentSettings().crowdPhotoCode;
+    store.settings = mergeSettings({ crowdPhotoCode: photoCode });
     persist();
     applyAudienceWindowSettings();
     return emitState();
@@ -1171,6 +1523,7 @@ app.whenReady().then(() => {
     distDir: join(__dirname, '../dist'),
     mediaFile: dataPath,
     getAudience: () => audienceFromState(currentDecorated()),
+    getSettings: () => currentSettings(),
   })
     .then((page) => {
       obsPage = page;
@@ -1178,6 +1531,31 @@ app.whenReady().then(() => {
     })
     .catch(() => {
       obsPage = null;
+    });
+  startCrowdServer({
+    getSettings: () => currentSettings(),
+    getVenues: () => crowdVenues(),
+    getLeagueName: () =>
+      normalizeCompetition(store?.competition) === 'wwfl'
+        ? "Whyalla Women's Football League"
+        : currentSettings().leagueName || 'Whyalla Football League',
+    getShortName: () => (normalizeCompetition(store?.competition) === 'wwfl' ? 'WWFL' : 'WFL'),
+    getLogoPath: () => join(paths.logos, 'wfl-logo.svg'),
+    getClubLogoPath: (file) => {
+      const name = String(file || '').replace(/[/\\]/g, '');
+      if (!name) return null;
+      const full = join(paths.logos, name);
+      return existsSync(full) ? full : null;
+    },
+    onSaved: () => emitState(),
+  })
+    .then((page) => {
+      crowdPage = page;
+      emitState();
+      void setupCrowdAnywhere(page.port);
+    })
+    .catch(() => {
+      crowdPage = null;
     });
   ensureWebsiteClubLogos(paths)
     .then(() => {
@@ -1198,7 +1576,9 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   persist();
+  stopFunnelRetry();
   obsPage?.close?.();
+  crowdPage?.close?.();
 });
 
 app.on('window-all-closed', () => {

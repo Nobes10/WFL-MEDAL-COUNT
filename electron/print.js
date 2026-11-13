@@ -279,6 +279,37 @@ html, body {
   padding-bottom: 4px;
   border-bottom-width: 2px;
 }
+.print-cues {
+  break-before: page;
+  padding-top: 4px;
+}
+.print-cue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.print-cue-list li {
+  margin: 0 0 14px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid #ddd;
+}
+.print-cue-list h3 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.print-cue-list p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.print-sheet.announcer .print-cues .print-run-cue {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #666;
+  font-size: 12px;
+}
 .print-sheet.announcer .print-winner {
   flex: none;
   margin: 10px 0 0;

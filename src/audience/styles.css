@@ -65,8 +65,8 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 32%);
-  gap: 12px 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 24%);
+  gap: 12px 16px;
   align-items: stretch;
 }
 .game-with-tally .match-slide {
@@ -192,8 +192,8 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 }
 .votes-stage.has-tally {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 32%);
-  gap: 12px 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 24%);
+  gap: 12px 16px;
   align-items: stretch;
 }
 .votes-main {
@@ -210,40 +210,43 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 .votes-stage.has-tally .top8 li,
 .game-with-tally .top8 li {
   padding: 4px 0;
-  grid-template-columns: 28px 52px 40px 1fr auto;
-  gap: 8px;
+  grid-template-columns: 22px 44px 32px 1fr auto;
+  gap: 6px;
 }
 .votes-stage.has-tally .top8 img,
 .game-with-tally .top8 img,
 .votes-stage.has-tally .top8 i,
 .game-with-tally .top8 i {
-  width: 52px;
-  height: 52px;
+  width: 44px;
+  height: 44px;
 }
 .votes-stage.has-tally .top8 img.club,
 .game-with-tally .top8 img.club,
 .votes-stage.has-tally .top8 i.club,
 .game-with-tally .top8 i.club {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   background: transparent;
+  object-fit: contain;
+  object-position: center;
 }
 .votes-stage.has-tally .top8 b,
 .game-with-tally .top8 b {
-  font-size: 22px;
+  font-size: 20px;
 }
 .votes-row {
   flex: 1;
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  display: flex;
+  justify-content: stretch;
   align-items: stretch;
-  gap: 8px;
+  gap: 10px;
   min-height: 0;
   padding: 8px 0 0;
 }
 .vote-col {
+  flex: 1 1 0;
   display: flex;
-  min-height: 0;
+  min-width: 0;
 }
 .vote-slot {
   width: 100%;
@@ -270,7 +273,7 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 56px 6px 20px;
+  padding: 48px 6px 144px;
   box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.28);
 }
 .vote-card-bg {
@@ -282,13 +285,12 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 }
 .club-watermark {
   position: absolute;
-  left: 50%;
-  top: 40%;
-  width: 145%;
-  height: 145%;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   max-width: none;
-  transform: translate(-50%, -50%);
   object-fit: contain;
+  object-position: center;
   opacity: 0.2;
   pointer-events: none;
   z-index: 0;
@@ -308,9 +310,6 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   background: rgba(7, 36, 69, 0.72);
 }
 .vote-card.wfl-wash .club-watermark {
-  width: 170%;
-  height: 170%;
-  top: 46%;
   opacity: 0.42;
   filter: contrast(1.05) saturate(0.9) brightness(1.08);
 }
@@ -333,25 +332,32 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   position: relative;
   z-index: 1;
   width: 94%;
-  max-width: 580px;
   max-height: 100%;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-end;
+  padding-bottom: 44px;
   overflow: hidden;
+}
+.player-photo {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
 }
 .player-cutout {
   position: relative;
   z-index: 2;
   display: block;
   width: 100%;
-  height: auto;
-  flex: 0 1 auto;
+  height: 100%;
+  max-height: 100%;
   min-height: 0;
-  max-height: 58vh;
   object-fit: contain;
   object-position: bottom center;
   background: transparent;
@@ -380,15 +386,15 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   border: 4px solid #fff;
   border-radius: 10px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+  container-type: inline-size;
 }
 .player-id strong {
   display: block;
-  height: 1em;
-  font-size: clamp(32px, 3.4vw, 52px);
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: clamp(18px, 9cqi, 48px);
+  line-height: 1.12;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: break-word;
 }
 .player-id small {
   display: block;
@@ -424,6 +430,8 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   width: 86px;
   height: 86px;
   padding: 0;
+  object-fit: contain;
+  object-position: center;
 }
 .votes-scoreboard .score-club strong {
   font-size: clamp(22px, 2.4vw, 34px);
@@ -516,17 +524,13 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   max-width: 860px;
 }
 .winner-card .player-cutout {
-  max-height: 72vh;
-}
-.winner-card .player-cutout.placeholder {
-  height: 280px;
-  font-size: 0;
+  max-height: 100%;
 }
 .winner-card .player-id {
   padding: 18px 22px 20px;
 }
 .winner-card .player-id strong {
-  font-size: clamp(48px, 5.6vw, 84px);
+  font-size: clamp(28px, 8cqi, 72px);
 }
 .winner-card .player-id small {
   font-size: clamp(20px, 2vw, 30px);
@@ -580,7 +584,7 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   align-items: center;
   justify-content: center;
   text-align: center;
-  gap: 12px;
+  gap: 18px;
 }
 .life-title p,
 .life-title small {
@@ -592,11 +596,40 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 }
 .life-title h2 {
   margin: 0;
-  font-size: clamp(56px, 8vw, 120px);
+  font-size: clamp(80px, 12vw, 180px);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.life-title small { color: #d7d0c6; font-size: clamp(16px, 2vw, 24px); }
+.life-title small { color: #d7d0c6; font-size: clamp(24px, 3.4vw, 48px); }
+.life-title p { font-size: clamp(22px, 3vw, 40px); }
+.stage.cue-hold,
+.cue-hold {
+  cursor: pointer;
+  height: 100%;
+}
+.stage.cue-board {
+  cursor: pointer;
+}
+.stage.cue-board .leaderboard-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+.goalkicker-board.grade-boards.single {
+  width: 100%;
+}
+.goalkicker-board.grade-boards.single .grade-board strong {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+}
+.goalkicker-board .goals-unit {
+  display: block;
+  margin-top: 4px;
+  color: #8b9bb0;
+  font-size: 0.38em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .life-grid {
   flex: 1;
   min-height: 0;
@@ -1154,12 +1187,12 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 }
 .scoreboard.has-top8 {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 36%);
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 28%);
   grid-template-rows: auto minmax(0, 1fr);
   align-items: stretch;
   justify-items: stretch;
   width: 100%;
-  gap: 12px 28px;
+  gap: 12px 20px;
 }
 .scoreboard.has-top8 .round-title {
   grid-column: 1 / -1;
@@ -1521,4 +1554,102 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 }
 .splash-fixtures.solo .splash-v em {
   font-size: clamp(28px, 3.2vw, 48px);
+}
+
+.wall-page {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: #000;
+  overflow: hidden;
+}
+.wall-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  color: #9eb0c4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 22px;
+}
+.wall-slide {
+  position: absolute;
+  inset: 0;
+  animation-name: wall-in;
+  animation-timing-function: ease;
+  animation-fill-mode: both;
+}
+@keyframes wall-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.wall-blur {
+  position: absolute;
+  inset: -5%;
+  background-position: center;
+  background-size: cover;
+  filter: blur(42px) brightness(0.45);
+}
+.wall-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.wall-lower {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+}
+.wall-lower--corner {
+  right: 1.5vw;
+  bottom: 1.5vh;
+  width: min(78vw, calc(78vh * 2048 / 1080));
+  aspect-ratio: 2048 / 1080;
+}
+.wall-lower-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: right bottom;
+}
+.wall-lower-name,
+.wall-lower-place {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  left: 59%;
+  right: 12%;
+}
+.wall-lower-name {
+  top: 75.8%;
+  bottom: 13.8%;
+  font-size: clamp(1.2rem, 3.6vh, 2.8rem);
+  font-weight: 700;
+}
+.wall-lower-place {
+  top: 86.8%;
+  bottom: 4.2%;
+  gap: 0.35em;
+  font-size: clamp(0.95rem, 2.7vh, 2rem);
+  font-weight: 600;
+}
+.wall-lower-club {
+  flex: 0 0 auto;
+  width: 1.15em;
+  height: 1.15em;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
 }
