@@ -94,21 +94,33 @@ function sendPage({ venues, leagueName, shortName, hasLogo }) {
   <style>
     :root { color-scheme: dark; --red:#d60a0a; --gold:#e3b341; --ink:#e6edf3; --muted:#9eb0c4; }
     * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; background: #07090d; color: var(--ink); }
+    html, body {
+      margin: 0; width: 100%; height: 100%;
+      height: 100dvh; height: 100svh;
+      background: #07090d; color: var(--ink);
+    }
     body {
+      display: flex; flex-direction: column;
+      overflow: hidden;
       font-family: "Segoe UI", system-ui, sans-serif;
       background:
         radial-gradient(circle at top right, rgba(214,10,10,.28), transparent 42%),
         radial-gradient(circle at 12% 88%, rgba(227,179,65,.16), transparent 36%),
         radial-gradient(circle at bottom right, rgba(12,113,195,.18), transparent 40%),
         #07090d;
+      background-attachment: fixed;
     }
     main {
-      width: min(420px, 100%);
-      margin: 0 auto;
-      padding: max(28px, env(safe-area-inset-top)) 20px max(40px, env(safe-area-inset-bottom));
+      width: 100%;
+      flex: 1 1 auto;
+      min-height: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: auto;
+      padding: max(20px, env(safe-area-inset-top)) 18px max(20px, env(safe-area-inset-bottom));
     }
-    .brand { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; margin-bottom: 22px; }
+    .brand { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; flex: none; }
     .brand img, .mark {
       width: 92px; height: 92px; object-fit: contain; filter: drop-shadow(0 10px 24px rgba(0,0,0,.45));
     }
@@ -126,8 +138,13 @@ function sendPage({ venues, leagueName, shortName, hasLogo }) {
       font-weight: 800; letter-spacing: -.03em;
     }
     h1 span { display: block; color: var(--gold); }
+    .fill { flex: 1 1 0; min-height: 12px; }
     .card {
-      margin-top: 22px; padding: 18px;
+      flex: 1 1 0;
+      display: flex;
+      flex-direction: column;
+      margin-top: 16px; padding: 18px;
+      min-height: 0;
       background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
       border: 1px solid rgba(227,179,65,.28);
       border-radius: 22px;
@@ -201,9 +218,9 @@ function sendPage({ venues, leagueName, shortName, hasLogo }) {
       .club-pop { align-items: center; }
       .club-sheet { border-radius: 22px; }
     }
-    .actions { display: grid; gap: 10px; margin-top: 6px; }
+    .actions { display: grid; gap: 10px; margin-top: 0; }
     .cta {
-      display: grid; place-items: center; min-height: 56px; padding: 14px 16px;
+      display: grid; place-items: center; min-height: 58px; padding: 16px 16px;
       border-radius: 16px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
       text-decoration: none; color: #fff; background: linear-gradient(180deg, #ff2a2a, var(--red) 55%, #9a0707);
       box-shadow: 0 10px 22px rgba(214,10,10,.35);
@@ -245,6 +262,7 @@ function sendPage({ venues, leagueName, shortName, hasLogo }) {
       </div>
       <input id="camera" class="file" type="file" accept="image/*" capture="environment" />
       <input id="gallery" class="file" type="file" accept="image/*" multiple />
+      <div class="fill" aria-hidden="true"></div>
       <div class="actions">
         <label class="cta" for="camera">Take a photo</label>
         <label class="cta ghost" for="gallery">Choose from phone</label>

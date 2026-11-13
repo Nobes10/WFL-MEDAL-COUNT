@@ -1511,31 +1511,25 @@ h2 { margin: 0 0 6px; }
   letter-spacing: 0.04em;
 }
 .print-sheet.announcer .print-head {
-  gap: 10px;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
   border-bottom-width: 2px;
 }
-.print-sheet.announcer .print-head img { height: 40px; }
-.print-sheet.announcer .print-head p { font-size: 9px; }
-.print-sheet.announcer .print-head h1 { margin-top: 1px; font-size: 18px; }
-.print-sheet.announcer .print-head h2 { margin-top: 1px; font-size: 12px; }
-.print-sheet.announcer .print-foot { margin-top: 8px; font-size: 9px; }
+.print-sheet.announcer .print-head img { height: 42px; }
+.print-sheet.announcer .print-head p { font-size: 10px; }
+.print-sheet.announcer .print-head h1 { margin-top: 1px; font-size: 20px; }
+.print-sheet.announcer .print-head h2 { margin-top: 1px; font-size: 13px; }
+.print-sheet.announcer .print-foot { flex: 0 0 auto; margin-top: 4px; font-size: 10px; }
 .print-sheet.announcer .print-page {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  height: 284mm;
+  height: 270mm;
   overflow: hidden;
   break-after: page;
   page-break-after: always;
-  break-inside: avoid;
-}
-.print-sheet.announcer .print-page.first {
-  height: 268mm;
-}
-.print-sheet.announcer .print-page.last-sheet {
-  height: 276mm;
 }
 .print-sheet.announcer .print-page:last-child {
   break-after: auto;
@@ -1549,70 +1543,71 @@ h2 { margin: 0 0 6px; }
 .print-sheet.announcer .print-round h3 {
   flex: 0 0 auto;
   margin: 4px 0 2px;
-  font-size: 12px;
+  font-size: 15px;
   padding-bottom: 2px;
   border-bottom-width: 2px;
 }
 .print-sheet.announcer .print-match {
   flex: 0 0 auto;
-  margin: 3px 0 0;
+  margin: 2px 0 0;
   padding-top: 2px;
   border-top: 1px solid #ddd;
-  gap: 8px;
+  gap: 6px;
 }
-.print-sheet.announcer .print-match strong { font-size: 12px; line-height: 1.1; }
-.print-sheet.announcer .print-match span { font-size: 11px; }
+.print-sheet.announcer .print-match strong { font-size: 14px; line-height: 1.1; }
+.print-sheet.announcer .print-match span { font-size: 12px; }
 .print-sheet.announcer .print-game li {
-  flex: 0 0 var(--vote-row, 6mm);
-  height: var(--vote-row, 6mm);
+  box-sizing: border-box;
+  flex: 1 1 0;
   min-height: 0;
+  height: auto;
   overflow: hidden;
-  grid-template-columns: auto auto 1fr;
-  gap: 0.4mm 1.5mm;
-  padding: 0;
+  grid-template-columns: 20px 22px 1fr;
+  gap: 0 6px;
+  padding: 0.2mm 0;
   align-items: center;
 }
 .print-sheet.announcer .print-game li b {
-  font-size: calc(var(--vote-row, 6mm) * 0.82);
+  font-size: 20px;
   line-height: 1;
 }
 .print-sheet.announcer .print-game .print-club {
-  width: calc(var(--vote-row, 6mm) * 0.74);
-  height: calc(var(--vote-row, 6mm) * 0.74);
+  width: 22px;
+  height: 22px;
 }
 .print-sheet.announcer .print-game li span {
-  font-size: calc(var(--vote-row, 6mm) * 0.58);
-  line-height: 1;
+  font-size: 16px;
+  line-height: 1.05;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .print-sheet.announcer .print-game li small {
   margin-left: 6px;
-  font-size: 0.72em;
+  font-size: 11px;
 }
 .print-sheet.announcer .print-skip {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: 13px;
   margin: 0 0 1px;
 }
 .print-sheet.announcer .print-grade-title {
   flex: none;
   margin: 0 0 8px;
-  font-size: 18px;
+  font-size: 20px;
   padding-bottom: 4px;
   border-bottom-width: 2px;
 }
 .print-sheet.announcer .print-winner {
   flex: none;
-  margin: 10px 0 0;
+  margin: 6px 0 0;
   padding: 8px 10px;
 }
-.print-sheet.announcer .print-winner p { margin-bottom: 4px; font-size: 11px; }
-.print-sheet.announcer .print-winner .print-photo { width: 40px; height: 40px; }
-.print-sheet.announcer .print-winner .print-club { width: 28px; height: 28px; }
-.print-sheet.announcer .print-winner strong { font-size: 18px; }
-.print-sheet.announcer .print-winner small { font-size: 12px; }
+.print-sheet.announcer .print-winner p { margin-bottom: 4px; font-size: 13px; }
+.print-sheet.announcer .print-winner .print-photo { width: 48px; height: 48px; }
+.print-sheet.announcer .print-winner .print-club { width: 34px; height: 34px; }
+.print-sheet.announcer .print-winner strong { font-size: 22px; }
+.print-sheet.announcer .print-winner small { font-size: 13px; }
 .print-sheet.runsheet .print-runsheet {
   list-style: none;
   margin: 0;
@@ -1740,20 +1735,20 @@ h2 { margin: 0 0 6px; }
 }
 .print-cue-list h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 .print-cue-list p {
   margin: 4px 0 0;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
 }
 .print-sheet.announcer .print-cues .print-run-cue {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #666;
-  font-size: 12px;
+  font-size: 14px;
 }
 .print-winner {
   break-inside: avoid;

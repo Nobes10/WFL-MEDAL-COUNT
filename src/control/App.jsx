@@ -2044,29 +2044,21 @@ function announcerPicks(game, clubs = [], scale = [3, 2, 1]) {
 }
 
 function announcerPageGroups(rounds) {
-  const buckets = [[], [], [], []];
-  const extra = [];
-  for (const round of rounds ?? []) {
-    const n = round.n;
-    if (n == null) extra.push(round);
-    else if (n < 5) buckets[0].push(round);
-    else if (n < 9) buckets[1].push(round);
-    else if (n < 13) buckets[2].push(round);
-    else buckets[3].push(round);
-  }
-  const pages = buckets.filter((bucket) => bucket.length);
-  if (extra.length) {
-    if (pages.length) pages[pages.length - 1].push(...extra);
-    else pages.push(extra);
+  const list = rounds ?? [];
+  const pages = [];
+  for (let i = 0; i < list.length; i += 2) {
+    pages.push(list.slice(i, i + 2));
   }
   return pages;
 }
 
 function announcerPageVoteStyle(rounds, { first = false, hasGradeTitle = false, hasWinner = false, lastSheet = false } = {}) {
-  const pageMm = first ? 268 : lastSheet ? 276 : 284;
-  let used = 4;
-  if (hasGradeTitle) used += 9;
+  const pageMm = 270;
+  let used = 6;
+  if (first) used += 16;
+  if (hasGradeTitle) used += 10;
   if (hasWinner) used += 16;
+  if (lastSheet) used += 7;
   let votes = 0;
   for (const round of rounds ?? []) {
     used += 7;
@@ -2077,7 +2069,7 @@ function announcerPageVoteStyle(rounds, { first = false, hasGradeTitle = false, 
     }
   }
   if (!votes) return undefined;
-  const row = Math.max(3.4, (pageMm - used) / votes);
+  const row = Math.max(5.2, (pageMm - used) / votes);
   return { '--vote-row': `${row.toFixed(3)}mm` };
 }
 
@@ -2251,19 +2243,27 @@ function PrintSheet({ job }) {
     [{ id: 'one', title: job.title, rounds: job.rounds ?? [] }];
   const many = sections.length > 1;
   const cues = job.cues ?? [];
+  const head = (
+    <header className="print-head">
+      {job.logoUrl ? <img src={job.logoUrl} alt="" /> : null}
+      <div>
+        <p>{job.leagueName}</p>
+        <h1>{job.title}</h1>
+        <h2>
+          {job.subtitle}
+          {job.season ? ` · ${job.season}` : ''}
+        </h2>
+      </div>
+    </header>
+  );
+  const announcerFoot = (
+    <p className="print-foot">
+      Announcer copy · {job.action === 'save' ? 'saved' : 'printed'} {new Date().toLocaleString()}
+    </p>
+  );
   return (
     <div className={`print-sheet${job.kind === 'announcer' ? ' announcer' : ''}${job.kind === 'runsheet' ? ' runsheet' : ''}`}>
-      <header className="print-head">
-        {job.logoUrl ? <img src={job.logoUrl} alt="" /> : null}
-        <div>
-          <p>{job.leagueName}</p>
-          <h1>{job.title}</h1>
-          <h2>
-            {job.subtitle}
-            {job.season ? ` · ${job.season}` : ''}
-          </h2>
-        </div>
-      </header>
+      {job.kind === 'announcer' ? null : head}
       {job.kind === 'runsheet' ? (
         <>
           <ol className="print-runsheet">
@@ -2300,6 +2300,7 @@ function PrintSheet({ job }) {
                   className={`print-page${first ? ' first' : ''}${lastSheet ? ' last-sheet' : ''}`}
                   style={announcerPageVoteStyle(rounds, { first, hasGradeTitle, hasWinner, lastSheet })}
                 >
+              {first ? head : null}
               {pageIndex === 0 && many ? (
                 <h2 className="print-grade-title">
                   {section.title}
@@ -2358,6 +2359,7 @@ function PrintSheet({ job }) {
                   </div>
                 </div>
               ) : null}
+              {lastSheet ? announcerFoot : null}
                 </div>
                 );
               })}
@@ -2386,11 +2388,9 @@ function PrintSheet({ job }) {
                   </li>
                 ))}
               </ol>
+              {announcerFoot}
             </section>
           ) : null}
-          <p className="print-foot">
-            Announcer copy · {job.action === 'save' ? 'saved' : 'printed'} {new Date().toLocaleString()}
-          </p>
         </>
       ) : (
         <>
