@@ -12,7 +12,12 @@
     "build": "vite build && node scripts/build-electron.mjs",
     "start": "npm run build && electron .",
     "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist:win": "npm run build && electron-builder --win",
+    "publish:win": "npm run build && electron-builder --win --publish always"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nobes10/WFL-MEDAL-COUNT.git"
   },
   "build": {
     "appId": "au.com.whyallafootball.medal-count",
@@ -47,6 +52,12 @@
     },
     "portable": {
       "artifactName": "WFL-Medal-Count-Portable.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Nobes10",
+      "repo": "WFL-MEDAL-COUNT",
+      "releaseType": "release"
     }
   },
   "dependencies": {
