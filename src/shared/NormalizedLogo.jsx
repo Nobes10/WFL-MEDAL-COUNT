@@ -123,9 +123,89 @@ function cropLogoToSquare(img, pad = 0.08) {
   return out.toDataURL('image/png');
 }
 
+function frameVoteLogo(img, { round = false, keep = false } = {}) {
+  const naturalW = img.naturalWidth || img.width;
+  const naturalH = img.naturalHeight || img.height;
+  if (!naturalW || !naturalH) return null;
+  const maxSide = 280;
+  const down = Math.min(1, maxSide / Math.max(naturalW, naturalH));
+  const w = Math.max(1, Math.round(naturalW * down));
+  const h = Math.max(1, Math.round(naturalH * down));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(img, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let minX = w;
+  let minY = h;
+  let maxX = 0;
+  let maxY = 0;
+  let found = false;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const p = (y * w + x) * 4;
+      if (data[p + 3] < 24) continue;
+      if (data[p] > 242 && data[p + 1] > 242 && data[p + 2] > 242) continue;
+      found = true;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (!found && !keep) return null;
+  const outSize = 320;
+  const out = document.createElement('canvas');
+  out.width = outSize;
+  out.height = outSize;
+  const draw = out.getContext('2d');
+  if (!draw) return null;
+  if (keep || !found) {
+    const fit = outSize / Math.max(naturalW, naturalH);
+    const dw = naturalW * fit;
+    const dh = naturalH * fit;
+    draw.drawImage(img, (outSize - dw) / 2, (outSize - dh) / 2, dw, dh);
+    return out.toDataURL('image/png');
+  }
+  const inkW = ((maxX - minX + 1) / w) * naturalW;
+  const inkH = ((maxY - minY + 1) / h) * naturalH;
+  const bleed = 0.04;
+  let sx = (minX / w) * naturalW - inkW * bleed;
+  let sy = (minY / h) * naturalH - inkH * bleed;
+  let sw = inkW * (1 + bleed * 2);
+  let sh = inkH * (1 + bleed * 2);
+  sx = Math.max(0, sx);
+  sy = Math.max(0, sy);
+  sw = Math.min(naturalW - sx, sw);
+  sh = Math.min(naturalH - sy, sh);
+  if (round) {
+    draw.save();
+    draw.beginPath();
+    draw.arc(outSize / 2, outSize / 2, outSize / 2, 0, Math.PI * 2);
+    draw.closePath();
+    draw.clip();
+    draw.fillStyle = '#ffffff';
+    draw.fillRect(0, 0, outSize, outSize);
+    const fit = Math.max(outSize / sw, outSize / sh);
+    const dw = sw * fit;
+    const dh = sh * fit;
+    draw.drawImage(img, sx, sy, sw, sh, (outSize - dw) / 2, (outSize - dh) / 2, dw, dh);
+    draw.restore();
+    return out.toDataURL('image/png');
+  }
+  const target = outSize * 0.98;
+  const fit = target / Math.max(sw, sh);
+  const dw = sw * fit;
+  const dh = sh * fit;
+  draw.drawImage(img, sx, sy, sw, sh, (outSize - dw) / 2, (outSize - dh) / 2, dw, dh);
+  return out.toDataURL('image/png');
+}
+
 const croppedCache = new Map();
 
-export function NormalizedLogo({ src, alt = '', pad = 0.08, className, crop = true }) {
+export function NormalizedLogo({ src, alt = '', pad = 0.08, className, crop = true, vote = false, round = false, keep = false }) {
   const [url, setUrl] = useState(src);
   useEffect(() => {
     let cancel = false;
@@ -133,7 +213,7 @@ export function NormalizedLogo({ src, alt = '', pad = 0.08, className, crop = tr
       setUrl(src);
       return undefined;
     }
-    const key = `${src}@${pad}`;
+    const key = `${src}@${pad}@${vote ? 'vote4' : 'prescreen'}@${round ? 'round' : 'full'}@${keep ? 'keep' : 'fit'}`;
     const cached = croppedCache.get(key);
     if (cached) {
       setUrl(cached);
@@ -145,7 +225,7 @@ export function NormalizedLogo({ src, alt = '', pad = 0.08, className, crop = tr
         const response = await fetch(src);
         if (!response.ok) return;
         const bitmap = await createImageBitmap(await response.blob());
-        const cropped = cropLogoToSquare(bitmap, pad);
+        const cropped = vote ? frameVoteLogo(bitmap, { round, keep }) : cropLogoToSquare(bitmap, pad);
         bitmap.close?.();
         if (cancel || !cropped) return;
         croppedCache.set(key, cropped);
@@ -157,6 +237,6 @@ export function NormalizedLogo({ src, alt = '', pad = 0.08, className, crop = tr
     return () => {
       cancel = true;
     };
-  }, [src, pad, crop]);
+  }, [src, pad, crop, vote, round, keep]);
   return <img src={url} alt={alt} className={className} />;
 }

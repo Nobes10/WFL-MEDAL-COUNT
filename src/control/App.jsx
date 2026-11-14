@@ -12,6 +12,9 @@ const RUNSHEET_INCLUDE_KEY = 'wfl-runsheet-include';
 const RUNSHEET_ORDER_KEY = 'wfl-runsheet-order';
 const RUNSHEET_SCOPED_KEY = 'wfl-runsheet-scoped';
 const COMP_KEY = 'wfl-competition';
+const VOTES_SCALE_KEY = 'wfl-votes-panel-scale';
+const VOTES_SCALE_MIN = 0.55;
+const VOTES_SCALE_MAX = 1.35;
 const RUNSHEET_SPLASH = 'splash';
 const RUNSHEET_TOTY = 'toty';
 const RUNSHEET_LIFE = 'lifemembers';
@@ -164,6 +167,20 @@ function readCompetition() {
     return window.localStorage.getItem(COMP_KEY) === 'wwfl' ? 'wwfl' : 'wfl';
   } catch {
     return 'wfl';
+  }
+}
+
+function clampVotesScale(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(VOTES_SCALE_MAX, Math.max(VOTES_SCALE_MIN, Math.round(n * 100) / 100));
+}
+
+function readVotesScale() {
+  try {
+    return clampVotesScale(window.localStorage.getItem(VOTES_SCALE_KEY) ?? 1);
+  } catch {
+    return 1;
   }
 }
 
@@ -853,7 +870,54 @@ export function App() {
   const [runsheetByComp, setRunsheetByComp] = useState(loadRunsheetState);
   const [runsheetDrag, setRunsheetDrag] = useState(null);
   const [competition, setCompetition] = useState(readCompetition);
+  const [nightSaved, setNightSaved] = useState(false);
+  const [saveFolder, setSaveFolder] = useState('');
+  const [votesScale, setVotesScale] = useState(readVotesScale);
   const runsheetDragHandle = useRef(false);
+  const votesScaleDrag = useRef(null);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VOTES_SCALE_KEY, String(votesScale));
+    } catch {
+      /* ignore storage failures */
+    }
+  }, [votesScale]);
+
+  useEffect(() => {
+    function onMove(event) {
+      const drag = votesScaleDrag.current;
+      if (!drag) return;
+      const next = clampVotesScale(drag.startScale + (event.clientX - drag.startX) / 320);
+      setVotesScale(next);
+    }
+    function onUp() {
+      votesScaleDrag.current = null;
+      document.body.classList.remove('is-resizing-votes');
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, []);
+
+  async function saveNight() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+    const result = await api.saveNight();
+    if (result?.canceled) return;
+    if (result?.error) {
+      window.alert(`Could not save: ${result.error}`);
+      return;
+    }
+    if (result?.file) setSaveFolder(result.file);
+    setNightSaved(true);
+    window.setTimeout(() => setNightSaved(false), 1600);
+  }
 
   useEffect(() => {
     if (!printJob) return undefined;
@@ -1278,6 +1342,17 @@ export function App() {
             </button>
           )}
           <button
+            type="button"
+            onClick={saveNight}
+            title={
+              saveFolder
+                ? `Saved to ${saveFolder}`
+                : 'Choose where to save votes, best players, Team of the year, and awards'
+            }
+          >
+            {nightSaved ? 'Saved' : 'Save'}
+          </button>
+          <button
             className="danger"
             onClick={() => {
               const ok = window.confirm(
@@ -1338,7 +1413,7 @@ export function App() {
       ) : null}
 
       {tab === 'votes' && (
-        <div className="votes-layout">
+        <div className="votes-layout" style={{ '--votes-scale': votesScale }}>
           <aside className="rounds">
             {(grade?.rounds ?? []).map((round) => (
               <section key={round.id}>
@@ -1375,6 +1450,26 @@ export function App() {
               </section>
             ))}
           </aside>
+          <div
+            className="votes-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize vote list"
+            aria-valuemin={Math.round(VOTES_SCALE_MIN * 100)}
+            aria-valuemax={Math.round(VOTES_SCALE_MAX * 100)}
+            aria-valuenow={Math.round(votesScale * 100)}
+            title="Drag to shrink or expand the game list"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              votesScaleDrag.current = {
+                startX: event.clientX,
+                startScale: votesScale,
+              };
+              document.body.classList.add('is-resizing-votes');
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+            }}
+            onDoubleClick={() => setVotesScale(1)}
+          />
 
           <main className="sheet">
             {!selected ? (
@@ -2979,7 +3074,20 @@ function SettingText({ label, hint, value, onCommit }) {
 }
 
 function ClubMark({ src, name }) {
-  if (src) return <NormalizedLogo src={src} alt={name} pad={0.06} />;
+  const round = /west\s*augusta|\bwafcw\b/i.test(name || '');
+  const keep = /north\s*whyalla|\bnwfc/i.test(name || '');
+  if (src) {
+    return (
+      <NormalizedLogo
+        src={src}
+        alt={name}
+        className={round ? 'is-round' : undefined}
+        vote
+        round={round}
+        keep={keep}
+      />
+    );
+  }
   const initial = String(name || '?').trim().charAt(0).toUpperCase();
   return <span className="club-mark">{initial}</span>;
 }

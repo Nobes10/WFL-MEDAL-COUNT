@@ -1420,6 +1420,47 @@ app.whenReady().then(() => {
     return emitState();
   });
 
+  ipcMain.handle('save-night', async () => {
+    try {
+      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      const options = {
+        title: 'Save medal count',
+        defaultPath: join(app.getPath('documents'), 'WFL-medal-count.json'),
+        filters: [{ name: 'Medal count', extensions: ['json'] }],
+      };
+      const picked = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options);
+      if (picked.canceled || !picked.filePath) return { canceled: true };
+      persist();
+      const savedAt = new Date().toISOString();
+      const votes = [];
+      for (const grade of store.grades ?? []) {
+        for (const round of grade.rounds ?? []) {
+          for (const game of round.games ?? []) {
+            votes.push({
+              gradeId: grade.id,
+              roundId: round.id,
+              gameId: game.id,
+              home: game.homeName ?? null,
+              away: game.awayName ?? null,
+              votes: game.votes ?? emptyVotes(),
+            });
+          }
+        }
+      }
+      const snapshot = {
+        savedAt,
+        votes,
+        teamOfTheYear: store.teamOfTheYear ?? {},
+        nightExtras: normalizeNightExtras(store.nightExtras),
+        lifeMembers: normalizeLifeMembers(store.lifeMembers),
+      };
+      writeFileSync(picked.filePath, JSON.stringify(snapshot, null, 2), 'utf8');
+      return { ok: true, savedAt, file: picked.filePath };
+    } catch (error) {
+      return { error: error?.message || 'Save failed' };
+    }
+  });
+
   ipcMain.handle('clear-entered-data', () => {
     for (const grade of store.grades ?? []) {
       for (const round of grade.rounds ?? []) {

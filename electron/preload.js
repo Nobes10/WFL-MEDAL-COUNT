@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('wflMedal', {
   moveLifeMember: (id, direction) => ipcRenderer.invoke('move-life-member', id, direction),
   clearLifeMembers: () => ipcRenderer.invoke('clear-life-members'),
   clearEnteredData: () => ipcRenderer.invoke('clear-entered-data'),
+  saveNight: () => ipcRenderer.invoke('save-night'),
   showPresentation: () => ipcRenderer.invoke('show-presentation'),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
   savePrintPdf: (fileName) => ipcRenderer.invoke('save-print-pdf', fileName),

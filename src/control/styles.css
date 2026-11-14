@@ -453,60 +453,97 @@ button.active { outline: 2px solid var(--blue); }
 }
 
 .votes-layout {
+  --votes-scale: 1;
+  --votes-score: calc(108px * var(--votes-scale));
+  --votes-logo: calc(84px * var(--votes-scale));
+  --votes-vs: calc(18px * var(--votes-scale));
+  --votes-gap: calc(8px * var(--votes-scale));
+  --votes-pad-y: calc(6px * var(--votes-scale));
+  --votes-pad-x: calc(8px * var(--votes-scale));
+  --votes-row: calc(102px * var(--votes-scale));
+  --votes-score-size: calc(15px * var(--votes-scale));
+  --votes-forfeit-size: calc(11px * var(--votes-scale));
+  --votes-heading: calc(11px * var(--votes-scale));
   flex: 1;
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content 8px 1fr;
   min-height: 0;
 }
 .rounds {
   overflow: auto;
-  padding: 10px 8px;
+  padding: calc(10px * var(--votes-scale)) calc(8px * var(--votes-scale));
   width: max-content;
-  border-right: 1px solid var(--line);
+  min-width: 0;
 }
-.rounds h3 { margin: 14px 0 8px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); text-align: center; }
+.votes-resize {
+  cursor: col-resize;
+  touch-action: none;
+  background:
+    linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat,
+    transparent;
+}
+.votes-resize:hover,
+.votes-resize:focus-visible,
+body.is-resizing-votes .votes-resize {
+  background:
+    linear-gradient(var(--gold), var(--gold)) center / 2px 100% no-repeat,
+    rgba(227, 179, 65, 0.08);
+}
+body.is-resizing-votes {
+  cursor: col-resize;
+  user-select: none;
+}
+.rounds h3 {
+  margin: calc(14px * var(--votes-scale)) 0 calc(8px * var(--votes-scale));
+  font-size: var(--votes-heading);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+}
 .game {
   width: max-content;
   min-width: 100%;
-  height: 102px;
-  min-height: 102px;
-  max-height: 102px;
+  height: var(--votes-row);
+  min-height: var(--votes-row);
+  max-height: var(--votes-row);
   overflow: hidden;
   text-align: center;
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: var(--votes-score) var(--votes-logo) var(--votes-vs) var(--votes-logo) var(--votes-score);
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  padding: 6px 8px;
+  column-gap: var(--votes-gap);
+  margin-bottom: var(--votes-gap);
+  padding: var(--votes-pad-y) var(--votes-pad-x);
   box-shadow: inset 0 0 0 2px transparent;
   background:
     radial-gradient(circle at top, rgba(227, 179, 65, 0.08), transparent 58%),
     #21262d;
 }
 .game-logos {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 2px;
-  flex: 0 0 auto;
+  display: contents;
 }
 .game-score {
-  flex: 0 0 auto;
-  font-size: 15px;
+  font-size: var(--votes-score-size);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1.15;
   color: var(--gold);
   white-space: nowrap;
+  min-width: 0;
 }
 .game-score.home { text-align: right; }
 .game-score.away { text-align: left; }
+.game.forfeit .forfeit-score {
+  white-space: normal;
+  font-size: var(--votes-forfeit-size);
+  line-height: 1.15;
+  text-align: right;
+}
 .game-logos em {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--votes-heading);
   font-weight: 800;
   letter-spacing: 0.04em;
   color: var(--gold);
@@ -516,26 +553,41 @@ button.active { outline: 2px solid var(--blue); }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  min-width: 16px;
+  gap: calc(2px * var(--votes-scale));
+  min-width: 0;
 }
 .game-logos img,
 .club-mark {
-  width: 84px;
-  height: 84px;
+  width: var(--votes-logo);
+  height: var(--votes-logo);
+  display: block;
   object-fit: contain;
+  object-position: center;
   background: transparent;
   border-radius: 0;
   padding: 0;
+  margin: 0;
   box-shadow: none;
 }
+.game-logos img.is-round {
+  border-radius: 50%;
+  overflow: hidden;
+}
 .club-mark {
+  width: var(--votes-logo);
+  height: var(--votes-logo);
+  justify-self: center;
   display: grid;
   place-items: center;
   color: #111;
   font-weight: 800;
 }
-.game.forfeit .game-score { color: var(--gold); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.game.forfeit .game-score {
+  color: var(--gold);
+  font-size: calc(12px * var(--votes-scale));
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 .game.done {
   border-color: var(--green);
   box-shadow: inset 0 0 0 2px var(--green);
