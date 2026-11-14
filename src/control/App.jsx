@@ -716,6 +716,12 @@ function ControlHome({
           {state.sync?.running ? 'Syncing…' : 'Sync from website'}
         </button>
       </div>
+      {state.sync?.running ? (
+        <p className="sync-home-msg" aria-live="polite">
+          {state.sync.message || 'Syncing…'}
+          {state.sync.total ? ` · ${state.sync.current}/${state.sync.total}` : ''}
+        </p>
+      ) : null}
       {!grades.length ? (
         <p className="muted">
           {competition === 'wwfl'
@@ -1307,6 +1313,7 @@ export function App() {
   return (
     <>
     <div className="app">
+      <SyncStatusBar sync={state?.sync} lastSyncedAt={state?.lastSyncedAt} />
       <header className="top">
         <div className="brand">
           {state.wflLogoUrl ? <img src={state.wflLogoUrl} alt="WFL" /> : null}
@@ -1326,8 +1333,8 @@ export function App() {
           </label>
         </div>
         <div className="top-actions">
-          <button disabled={state.sync?.running} onClick={() => api.syncSeason()}>
-            {state.sync?.running ? 'Syncing…' : 'Sync from website'}
+          <button disabled={state.sync?.running} onClick={() => api.syncSeason()} title={state.sync?.message || ''}>
+            {state.sync?.running ? (state.sync.message || 'Syncing…') : 'Sync from website'}
           </button>
           {state.settings?.presentTarget === 'obs' ? (
             <button
@@ -1416,8 +1423,14 @@ export function App() {
         <div className="votes-layout" style={{ '--votes-scale': votesScale }}>
           <aside className="rounds">
             {(grade?.rounds ?? []).map((round) => (
-              <section key={round.id}>
-                <h3>{round.name}</h3>
+              <section
+                key={round.id}
+                className={round.specialtyTheme ? `specialty-${round.specialtyTheme}` : undefined}
+              >
+                <h3>
+                  {round.name}
+                  {round.specialtyName ? <em>{round.specialtyName}</em> : null}
+                </h3>
                 {round.games.map((game) => {
                   const status = voteStatus(game, voteScaleNow);
                   return (
@@ -1425,7 +1438,7 @@ export function App() {
                       key={game.id}
                       className={`game ${selected?.id === game.id ? 'selected' : ''} ${status} ${game.forfeit ? 'forfeit' : ''}`}
                       onClick={() => api.selectGame(game.id)}
-                      title={`${game.homeName} v ${game.awayName}`}
+                      title={`${game.homeName} v ${game.awayName}${game.alias ? ` · ${game.alias}` : ''}`}
                     >
                       {game.forfeit ? (
                         <span className="game-score forfeit-score">{game.forfeitLine || 'Forfeit'}</span>
@@ -1480,7 +1493,10 @@ export function App() {
               <>
                 <div className="match-head">
                   <div>
-                    <p className="eyebrow">{selected.roundName}</p>
+                    <p className="eyebrow">
+                      {selected.roundName}
+                      {selected.alias ? ` · ${selected.alias}` : ''}
+                    </p>
                     <h2>
                       {selected.homeName} v {selected.awayName}
                     </h2>
@@ -2170,7 +2186,8 @@ function announcerPageVoteStyle(rounds, { first = false, hasGradeTitle = false, 
 
 function announcerRounds(grade, clubs) {
   return (grade?.rounds ?? []).map((round) => ({
-    name: round.name,
+    name: round.displayName || round.name,
+    specialtyName: round.specialtyName || null,
     n: (() => {
       const match = String(round.name ?? '').match(/\b(?:round|rd)\s*(\d+)\b/i);
       const value = match ? Number(match[1]) : NaN;
@@ -2537,6 +2554,29 @@ function announcerFileName(grades, season) {
   return `WFL-Announcer-${year}.pdf`;
 }
 
+function SyncStatusBar({ sync, lastSyncedAt }) {
+  if (!sync) return null;
+  const running = Boolean(sync.running);
+  const failed = !running && String(sync.message || '').toLowerCase().startsWith('sync failed');
+  if (!running && !failed && !sync.message) return null;
+  if (!running && !failed) return null;
+  const total = Number(sync.total) || 0;
+  const current = Number(sync.current) || 0;
+  const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : running ? null : 100;
+  return (
+    <div className={`sync-status${running ? ' is-running' : ''}${failed ? ' is-failed' : ''}`} role="status" aria-live="polite">
+      <div className="sync-status-copy">
+        <strong>{running ? 'Syncing' : failed ? 'Sync failed' : 'Sync'}</strong>
+        <span>{sync.message || (running ? 'Working…' : formatWhen(lastSyncedAt))}</span>
+        {running && total > 0 ? <em>{current} / {total}</em> : null}
+      </div>
+      <div className="sync-status-track" aria-hidden="true">
+        <i className={pct == null ? 'is-indeterminate' : undefined} style={pct == null ? undefined : { width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function AnnouncerPicker({ grades, selectedIds, onChange, onCancel, onPrint, onSave }) {
   function toggle(id) {
     onChange(selectedIds.includes(id) ? selectedIds.filter((item) => item !== id) : [...selectedIds, id]);
@@ -2595,9 +2635,19 @@ function AnnouncerPicker({ grades, selectedIds, onChange, onCancel, onPrint, onS
 function SettingsPanel({ state, grade, grades }) {
   const s = state.settings ?? {};
   const medalKeys = Object.keys(s.medalTitles ?? {});
+  const [newSpecialtyName, setNewSpecialtyName] = useState('');
+  const [newSpecialtyRound, setNewSpecialtyRound] = useState('');
+  const specialtyRoundOptions = state.specialtyRoundOptions ?? [];
 
   function setFlag(key, value) {
     api.updateSettings({ [key]: value });
+  }
+
+  function addSpecialty() {
+    const name = newSpecialtyName.trim();
+    if (!name) return;
+    api.addSpecialtyAsset(name, newSpecialtyRound);
+    setNewSpecialtyName('');
   }
 
   return (
@@ -2791,6 +2841,181 @@ function SettingsPanel({ state, grade, grades }) {
             max={20}
             onCommit={(value) => setFlag('leaderboardSize', value)}
           />
+        </section>
+
+        <section>
+          <h3>Specialty rounds</h3>
+          <p className="muted">
+            Sync pulls names from PlayHQ, or add your own. Upload a pin, tweak colours, and choose which round it sits on.
+          </p>
+          <div className="specialty-add">
+            <label>
+              <span>Name</span>
+              <input
+                value={newSpecialtyName}
+                onChange={(event) => setNewSpecialtyName(event.target.value)}
+                placeholder="e.g. Pink Socks"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addSpecialty();
+                  }
+                }}
+              />
+            </label>
+            <label>
+              <span>Round</span>
+              <select
+                value={newSpecialtyRound}
+                onChange={(event) => setNewSpecialtyRound(event.target.value)}
+              >
+                <option value="">Select round…</option>
+                {specialtyRoundOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="primary"
+              disabled={!newSpecialtyName.trim()}
+              onClick={addSpecialty}
+            >
+              Add specialty
+            </button>
+          </div>
+          {(state.specialtyCatalog ?? []).length ? (
+            <div className="specialty-assets">
+              {state.specialtyCatalog.map((item) => {
+                const colors = item.colors || item.photoColors || { a: '#e879a8', b: '#8a2a55', bg: '#140912' };
+                const roundValue = item.effectiveRoundName || '';
+                const fromWebsite = Boolean(item.websiteRoundName);
+                return (
+                  <div key={item.key} className="specialty-asset-card">
+                    <div className="specialty-asset-row">
+                      <div className="specialty-asset-preview">
+                        {item.pinUrl ? (
+                          <img src={item.pinUrl} alt="" />
+                        ) : (
+                          <span>No pin</span>
+                        )}
+                        {item.colors ? (
+                          <i
+                            className="specialty-swatch"
+                            style={{
+                              background: `linear-gradient(135deg, ${item.colors.a}, ${item.colors.b})`,
+                            }}
+                            title={`${item.colors.a} · ${item.colors.b}`}
+                          />
+                        ) : null}
+                      </div>
+                      <div className="specialty-asset-copy">
+                        <strong>{item.label}</strong>
+                        <small>
+                          {fromWebsite
+                            ? item.roundIsDefault
+                              ? `Website default · ${item.websiteRoundName}`
+                              : `Moved from website (${item.websiteRoundName})`
+                            : roundValue
+                              ? `Custom · ${roundValue}`
+                              : 'Custom · pick a round'}
+                        </small>
+                      </div>
+                      <div className="specialty-asset-actions">
+                        <button type="button" onClick={() => api.setSpecialtyAssetPin(item.label)}>
+                          {item.pinUrl ? 'Change pin' : 'Upload pin'}
+                        </button>
+                        {item.pinUrl ? (
+                          <button type="button" className="ghost" onClick={() => api.clearSpecialtyAssetPin(item.label)}>
+                            Clear pin
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => api.removeSpecialtyAsset(item.label)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                    <label className="specialty-round-field">
+                      <span>Round</span>
+                      <select
+                        value={roundValue}
+                        onChange={(event) => api.setSpecialtyAssetRound(item.label, event.target.value)}
+                      >
+                        {!roundValue ? <option value="">Select round…</option> : null}
+                        {(item.roundOptions ?? specialtyRoundOptions).map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                            {item.websiteRoundName &&
+                            name.toLowerCase() === String(item.websiteRoundName).toLowerCase()
+                              ? ' (website)'
+                              : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="specialty-color-row">
+                      <label>
+                        <span>Predominant</span>
+                        <input
+                          type="color"
+                          value={colors.a}
+                          onChange={(event) =>
+                            api.setSpecialtyAssetColors(item.label, {
+                              ...colors,
+                              a: event.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>Secondary</span>
+                        <input
+                          type="color"
+                          value={colors.b}
+                          onChange={(event) =>
+                            api.setSpecialtyAssetColors(item.label, {
+                              ...colors,
+                              b: event.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>Background</span>
+                        <input
+                          type="color"
+                          value={colors.bg}
+                          onChange={(event) =>
+                            api.setSpecialtyAssetColors(item.label, {
+                              ...colors,
+                              bg: event.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      {item.photoColors ? (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => api.resetSpecialtyAssetColors(item.label)}
+                        >
+                          Reset from photo
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="muted">No specialty rounds yet — sync from PlayHQ or add one above.</p>
+          )}
         </section>
 
         <section>
@@ -3129,7 +3354,7 @@ function TeamColumn({ name, logo, players, votes, nextPick, onPick }) {
 function slideLabel(slide, showGrade = false) {
   let label = slide.type;
   if (slide.type === 'title') label = `Opening · ${slide.medalTitle}`;
-  else if (slide.type === 'round') label = `Scoreboard · ${slide.roundName}`;
+  else if (slide.type === 'round') label = `Scoreboard · ${slide.roundTitle || slide.roundName}`;
   else if (slide.type === 'match') {
     label = slide.forfeit ? slide.forfeitLine || `${slide.homeName} v ${slide.awayName} · Forfeit` : `${slide.homeName} v ${slide.awayName}`;
   } else if (slide.type === 'votes') {

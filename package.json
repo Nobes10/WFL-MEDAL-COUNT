@@ -1,6 +1,6 @@
 {
   "name": "wfl-medal-count",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Whyalla Football League medal count — enter 3-2-1 before the night, present offline",
   "author": "Whyalla Football League",
   "private": true,
@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node scripts/build-electron.mjs && concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .\"",
     "icon": "node scripts/make-icon.mjs",
-    "build": "vite build && node scripts/build-electron.mjs",
+    "build": "npm run icon && vite build && node scripts/build-electron.mjs",
     "start": "npm run build && electron .",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",

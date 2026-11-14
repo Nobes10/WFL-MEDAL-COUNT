@@ -10,6 +10,7 @@ export function storePaths(userData) {
     photos: join(root, 'photos'),
     logos: join(root, 'logos'),
     sponsors: join(root, 'sponsors'),
+    specialty: join(root, 'specialty'),
   };
 }
 
@@ -18,6 +19,7 @@ export function ensureStoreDirs(paths) {
   mkdirSync(paths.photos, { recursive: true });
   mkdirSync(paths.logos, { recursive: true });
   mkdirSync(paths.sponsors, { recursive: true });
+  mkdirSync(paths.specialty, { recursive: true });
 }
 
 export function installClubLogoOverrides(paths, sourceDir) {

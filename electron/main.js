@@ -35,6 +35,15 @@ import {
   photosRoot,
   setCustomArtFromPath,
 } from './crowdPhotos.js';
+import {
+  applySpecialtyRoundOverrides,
+  formatSpecialtyName,
+  mergeSpecialtyAssets,
+  migrateRoundSpecialtyPins,
+  normalizeSpecialtyColors,
+  specialtyAssetKey,
+} from './specialty.js';
+import { extractSpecialtyColors } from './specialtyColors.js';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -86,6 +95,7 @@ function dataPath(kind, fileName) {
   if (kind === 'photos') return join(paths.photos, fileName);
   if (kind === 'logos') return join(paths.logos, fileName);
   if (kind === 'sponsors') return join(paths.sponsors, fileName);
+  if (kind === 'specialty') return join(paths.specialty, fileName);
   return null;
 }
 
@@ -567,6 +577,19 @@ app.whenReady().then(() => {
   installClubLogoOverrides(paths, join(__dirname, 'club-logos'));
   store = loadStore(paths);
   store.grades = (store.grades ?? []).filter((grade) => String(grade.id) !== 'women');
+  if (
+    migrateRoundSpecialtyPins(
+      store,
+      (pinFile) => join(paths.specialty, pinFile),
+      extractSpecialtyColors
+    )
+  ) {
+    store.settings = mergeSettings(store.settings);
+    persist();
+  }
+  if (applySpecialtyRoundOverrides(store.grades, mergeSettings(store.settings))) {
+    persist();
+  }
   try {
     applyClubLogoFiles(store.clubs, paths);
   } catch {
@@ -650,6 +673,236 @@ app.whenReady().then(() => {
 
   ipcMain.handle('select-game', (_event, gameId) => {
     store.selectedGameId = gameId;
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('add-specialty-asset', (_event, specialtyName, roundName) => {
+    const label = formatSpecialtyName(specialtyName);
+    const key = specialtyAssetKey(label);
+    if (!key) return decorateState(store, paths);
+    const assets = mergeSpecialtyAssets(store.settings?.specialtyAssets);
+    const nextRound = String(roundName ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80);
+    const prev = assets[key] || {
+      label,
+      pinFile: null,
+      colors: null,
+      photoColors: null,
+      roundName: null,
+      websiteRoundName: null,
+    };
+    const website = String(prev.websiteRoundName || '').trim();
+    const useWebsite =
+      Boolean(website) && (!nextRound || nextRound.toLowerCase() === website.toLowerCase());
+    assets[key] = {
+      ...prev,
+      label,
+      roundName: useWebsite ? null : nextRound || prev.roundName || null,
+    };
+    store.settings = mergeSettings({
+      ...store.settings,
+      specialtyAssets: assets,
+    });
+    applySpecialtyRoundOverrides(store.grades, store.settings);
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('remove-specialty-asset', (_event, specialtyName) => {
+    const label = formatSpecialtyName(specialtyName);
+    const key = specialtyAssetKey(label);
+    if (!key) return decorateState(store, paths);
+    const assets = mergeSpecialtyAssets(store.settings?.specialtyAssets);
+    const prev = assets[key];
+    if (!prev) return decorateState(store, paths);
+    if (prev.pinFile) {
+      const file = join(paths.specialty, prev.pinFile);
+      if (existsSync(file)) {
+        try {
+          unlinkSync(file);
+        } catch {
+          /* keep going */
+        }
+      }
+    }
+    delete assets[key];
+    store.settings = mergeSettings({
+      ...store.settings,
+      specialtyAssets: assets,
+    });
+    for (const grade of store.grades ?? []) {
+      for (const round of grade.rounds ?? []) {
+        if (specialtyAssetKey(round.specialtyName) !== key) continue;
+        if (round.specialtySource !== 'manual' && prev.websiteRoundName) continue;
+        round.specialtyName = '';
+        round.specialtySource = '';
+        for (const game of round.games ?? []) {
+          if (specialtyAssetKey(game.alias) === key) game.alias = '';
+        }
+      }
+    }
+    applySpecialtyRoundOverrides(store.grades, store.settings);
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('set-specialty-asset-pin', async (_event, specialtyName) => {
+    const label = formatSpecialtyName(specialtyName);
+    const key = specialtyAssetKey(label);
+    if (!key) return decorateState(store, paths);
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: `Specialty pin · ${label}`,
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+    });
+    if (picked.canceled || !picked.filePaths?.[0]) return decorateState(store, paths);
+    const file = picked.filePaths[0];
+    const imageFile = `${key.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'specialty'}-${randomUUID()}${extname(file) || '.png'}`;
+    ensureStoreDirs(paths);
+    const assets = mergeSpecialtyAssets(store.settings?.specialtyAssets);
+    const prevFile = assets[key]?.pinFile;
+    if (prevFile) {
+      const prev = join(paths.specialty, prevFile);
+      if (existsSync(prev)) {
+        try {
+          unlinkSync(prev);
+        } catch {
+          /* keep going */
+        }
+      }
+    }
+    const dest = join(paths.specialty, imageFile);
+    copyFileSync(file, dest);
+    const colors = extractSpecialtyColors(dest);
+    const prev = assets[key] || {};
+    assets[key] = {
+      label,
+      pinFile: imageFile,
+      colors,
+      photoColors: colors,
+      roundName: prev.roundName || null,
+      websiteRoundName: prev.websiteRoundName || null,
+    };
+    store.settings = mergeSettings({
+      ...store.settings,
+      specialtyAssets: assets,
+    });
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('clear-specialty-asset-pin', (_event, specialtyName) => {
+    const label = formatSpecialtyName(specialtyName);
+    const key = specialtyAssetKey(label);
+    if (!key) return decorateState(store, paths);
+    const assets = mergeSpecialtyAssets(store.settings?.specialtyAssets);
+    const prevFile = assets[key]?.pinFile;
+    if (prevFile) {
+      const prev = join(paths.specialty, prevFile);
+      if (existsSync(prev)) {
+        try {
+          unlinkSync(prev);
+        } catch {
+          /* keep going */
+        }
+      }
+    }
+    if (assets[key]) {
+      assets[key] = {
+        ...assets[key],
+        label: assets[key].label || label,
+        pinFile: null,
+      };
+    }
+    store.settings = mergeSettings({
+      ...store.settings,
+      specialtyAssets: assets,
+    });
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('set-specialty-asset-colors', (_event, specialtyName, colors) => {
+    const label = formatSpecialtyName(specialtyName);
+    const key = specialtyAssetKey(label);
+    if (!key) return decorateState(store, paths);
+    const nextColors = normalizeSpecialtyColors(colors);
+    if (!nextColors) return decorateState(store, paths);
+    const assets = mergeSpecialtyAssets(store.settings?.specialtyAssets);
+    const prev = assets[key] || {
+      label,
+      pinFile: null,
+      colors: null,
+      photoColors: null,
+      roundName: null,
+      websiteRoundName: null,
+    };
+    assets[key] = {
+      ...prev,
+      label: prev.label || label,
+      colors: nextColors,
+    };
+    store.settings = mergeSettings({
+      ...store.settings,
+      specialtyAssets: assets,
+    });
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('reset-specialty-asset-colors', (_event, specialtyName) => {
+    const label = formatSpecialtyName(specialtyName);
+    const key = specialtyAssetKey(label);
+    if (!key) return decorateState(store, paths);
+    const assets = mergeSpecialtyAssets(store.settings?.specialtyAssets);
+    const prev = assets[key];
+    if (!prev) return decorateState(store, paths);
+    const fromPhoto = normalizeSpecialtyColors(prev.photoColors);
+    if (!fromPhoto) return decorateState(store, paths);
+    assets[key] = {
+      ...prev,
+      colors: fromPhoto,
+    };
+    store.settings = mergeSettings({
+      ...store.settings,
+      specialtyAssets: assets,
+    });
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('set-specialty-asset-round', (_event, specialtyName, roundName) => {
+    const label = formatSpecialtyName(specialtyName);
+    const key = specialtyAssetKey(label);
+    if (!key) return decorateState(store, paths);
+    const assets = mergeSpecialtyAssets(store.settings?.specialtyAssets);
+    const prev = assets[key] || {
+      label,
+      pinFile: null,
+      colors: null,
+      photoColors: null,
+      roundName: null,
+      websiteRoundName: null,
+    };
+    const nextRound = String(roundName ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80);
+    const website = String(prev.websiteRoundName || '').trim();
+    const useDefault = !nextRound || (website && nextRound.toLowerCase() === website.toLowerCase());
+    assets[key] = {
+      ...prev,
+      label: prev.label || label,
+      roundName: useDefault ? null : nextRound,
+    };
+    store.settings = mergeSettings({
+      ...store.settings,
+      specialtyAssets: assets,
+    });
+    applySpecialtyRoundOverrides(store.grades, store.settings);
     persist();
     return emitState();
   });
@@ -1550,10 +1803,14 @@ app.whenReady().then(() => {
     const settings = mergeSettings(store.settings);
     const competition = normalizeCompetition(store.competition);
     store = createEmptyStore();
-    store.settings = settings;
+    store.settings = mergeSettings({
+      ...settings,
+      specialtyAssets: {},
+    });
     store.competition = competition;
     clearDirFiles(paths.photos);
     clearDirFiles(paths.sponsors);
+    clearDirFiles(paths.specialty);
     persist();
     applyAudienceWindowSettings();
     return emitState();

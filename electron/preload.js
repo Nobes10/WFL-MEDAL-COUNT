@@ -6,6 +6,20 @@ contextBridge.exposeInMainWorld('wflMedal', {
   syncSeason: () => ipcRenderer.invoke('sync-season'),
   setActiveGrade: (gradeId) => ipcRenderer.invoke('set-active-grade', gradeId),
   selectGame: (gameId) => ipcRenderer.invoke('select-game', gameId),
+  addSpecialtyAsset: (specialtyName, roundName) =>
+    ipcRenderer.invoke('add-specialty-asset', specialtyName, roundName),
+  removeSpecialtyAsset: (specialtyName) =>
+    ipcRenderer.invoke('remove-specialty-asset', specialtyName),
+  setSpecialtyAssetPin: (specialtyName) =>
+    ipcRenderer.invoke('set-specialty-asset-pin', specialtyName),
+  clearSpecialtyAssetPin: (specialtyName) =>
+    ipcRenderer.invoke('clear-specialty-asset-pin', specialtyName),
+  setSpecialtyAssetColors: (specialtyName, colors) =>
+    ipcRenderer.invoke('set-specialty-asset-colors', specialtyName, colors),
+  resetSpecialtyAssetColors: (specialtyName) =>
+    ipcRenderer.invoke('reset-specialty-asset-colors', specialtyName),
+  setSpecialtyAssetRound: (specialtyName, roundName) =>
+    ipcRenderer.invoke('set-specialty-asset-round', specialtyName, roundName),
   setVotes: (gameId, votes) => ipcRenderer.invoke('set-votes', gameId, votes),
   assignVote: (gameId, playerId) => ipcRenderer.invoke('assign-vote', gameId, playerId),
   addGamePlayer: (gameId, player) => ipcRenderer.invoke('add-game-player', gameId, player),

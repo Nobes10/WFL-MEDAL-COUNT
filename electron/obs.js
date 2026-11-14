@@ -45,7 +45,7 @@ function rewriteMedalUrls(value) {
   if (typeof value === 'string') {
     return value
       .replace(/^medal:\/\/crowd\/(.+)$/, '/crowd/$1')
-      .replace(/^medal:\/\/(logos|photos|sponsors)\/(.+)$/, '/media/$1/$2');
+      .replace(/^medal:\/\/(logos|photos|sponsors|specialty)\/(.+)$/, '/media/$1/$2');
   }
   if (Array.isArray(value)) return value.map(rewriteMedalUrls);
   if (value && typeof value === 'object') {
@@ -137,7 +137,7 @@ export function startObsServer({ distDir, mediaFile, getAudience, getSettings })
       return;
     }
 
-    const media = path.match(/^\/media\/(logos|photos|sponsors)\/([^/]+)$/);
+    const media = path.match(/^\/media\/(logos|photos|sponsors|specialty)\/([^/]+)$/);
     if (media) {
       sendFile(res, mediaFile(media[1], basename(media[2])));
       return;

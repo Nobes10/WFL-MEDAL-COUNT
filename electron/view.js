@@ -48,6 +48,14 @@ import {
 } from './constants.js';
 import { mediaUrl } from './store.js';
 import { crowdViewFromSettings } from './crowdPhotos.js';
+import {
+  displayRoundTitle,
+  formatSpecialtyName,
+  listRoundNameOptions,
+  listSpecialtyCatalog,
+  roundSpecialtyName,
+  specialtyPresentation,
+} from './specialty.js';
 
 function crowdClubLogoUrl(venue, clubs, women) {
   const name = displayLeagueClubName(venue) || String(venue || '').trim();
@@ -854,6 +862,8 @@ function decorateSlides(rawSlides, sponsors, competition) {
     logoUrl: mediaUrl('logos', slide.logoFile || slide.winner?.logoFile),
     homeLogoUrl: mediaUrl('logos', slide.homeLogoFile),
     awayLogoUrl: mediaUrl('logos', slide.awayLogoFile),
+    specialtyPinUrl: mediaUrl('specialty', slide.specialtyPinFile),
+    specialtyColors: slide.specialtyColors || null,
     imageUrl: mediaUrl('sponsors', slide.imageFile),
     winner: slide.winner
       ? {
@@ -933,28 +943,42 @@ export function decorateState(store, paths) {
         photoUrl: mediaUrl('photos', row.photoFile),
         logoUrl: mediaUrl('logos', row.logoFile),
       })),
-      rounds: (grade.rounds ?? []).filter((round) => includeRound(round, settings)).map((round) => ({
-        ...round,
-        games: round.games.map((game) => {
-          const named = {
-            ...game,
-            homeName: presentClubName(game.homeName),
-            awayName: presentClubName(game.awayName),
-          };
-          return {
-            ...named,
-            ...forfeitDetails(named),
-            ...scoreFields(named),
-            homeLogoUrl: mediaUrl('logos', gradeClubs.find((club) => club.id === game.homeId)?.logoFile),
-            awayLogoUrl: mediaUrl('logos', gradeClubs.find((club) => club.id === game.awayId)?.logoFile),
-            players: (game.players ?? []).map((player) => ({
-              ...playerView(player),
-              clubName: presentClubName(player.clubName),
-              clubLabel: presentClubName(clubLabelForVote(grade, player.id, player.clubName)),
-            })),
-          };
-        }),
-      })),
+      rounds: (grade.rounds ?? []).filter((round) => includeRound(round, settings)).map((round) => {
+        const specialtyName = formatSpecialtyName(roundSpecialtyName(round));
+        const specialty = specialtyPresentation(settings, specialtyName, round.specialtyPinFile);
+        return {
+          ...round,
+          specialtyName: specialty.specialtyName,
+          specialtyTheme: specialty.specialtyTheme,
+          specialtyColors: specialty.specialtyColors,
+          specialtyPinUrl: mediaUrl('specialty', specialty.specialtyPinFile),
+          displayName: displayRoundTitle(round),
+          games: round.games.map((game) => {
+            const named = {
+              ...game,
+              homeName: presentClubName(game.homeName),
+              awayName: presentClubName(game.awayName),
+            };
+            const alias = formatSpecialtyName(game.alias || specialtyName);
+            const gameSpecialty = specialtyPresentation(settings, alias || specialtyName, round.specialtyPinFile);
+            return {
+              ...named,
+              alias: alias || null,
+              specialtyTheme: gameSpecialty.specialtyTheme,
+              specialtyColors: gameSpecialty.specialtyColors,
+              ...forfeitDetails(named),
+              ...scoreFields(named),
+              homeLogoUrl: mediaUrl('logos', gradeClubs.find((club) => club.id === game.homeId)?.logoFile),
+              awayLogoUrl: mediaUrl('logos', gradeClubs.find((club) => club.id === game.awayId)?.logoFile),
+              players: (game.players ?? []).map((player) => ({
+                ...playerView(player),
+                clubName: presentClubName(player.clubName),
+                clubLabel: presentClubName(clubLabelForVote(grade, player.id, player.clubName)),
+              })),
+            };
+          }),
+        };
+      }),
     };
   });
   const grades = gradesForCompetition(allGrades, store.competition);
@@ -1064,6 +1088,13 @@ export function decorateState(store, paths) {
     leadingGoalkickerBoard: leadingGoalkickerBoardView(grades, clubs, settings, womenComp),
     leadingGoalkicker: leadingGoalkickerView(grades, clubs, settings, womenComp),
     crowd: crowdViewWithLogos(settings, clubs, womenComp),
+    specialtyCatalog: listSpecialtyCatalog(store.grades, settings).map((item) => ({
+      ...item,
+      pinUrl: mediaUrl('specialty', item.pinFile),
+    })),
+    specialtyRoundOptions: listRoundNameOptions(store.grades, {
+      includeFinals: Boolean(settings.showFinals),
+    }),
     settings,
     sync: store.sync,
     wflLogoUrl: existsSync(join(paths.logos, 'wfl-logo.svg'))

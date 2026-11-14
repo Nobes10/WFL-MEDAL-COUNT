@@ -97,18 +97,56 @@ function Top8({ rows, live, topN = 8, full = false }) {
   );
 }
 
-function ScoreboardPanel({ roundName, games, top8, live, topN = 8, showTopBoard = true }) {
+function specialtyStyle(colors) {
+  if (!colors?.a || !colors?.b || !colors?.bg) return undefined;
+  return {
+    '--specialty-a': colors.a,
+    '--specialty-b': colors.b,
+    '--specialty-bg': colors.bg,
+  };
+}
+
+function SpecialtyPin({ url, name }) {
+  if (!url && !name) return null;
+  return (
+    <div className="specialty-pin">
+      {url ? <img src={url} alt="" /> : null}
+      {name ? <span>{name}</span> : null}
+    </div>
+  );
+}
+
+function ScoreboardPanel({
+  roundName,
+  roundTitle,
+  specialtyName,
+  specialtyTheme,
+  specialtyPinUrl,
+  specialtyColors,
+  games,
+  top8,
+  live,
+  topN = 8,
+  showTopBoard = true,
+}) {
   const rows = showTopBoard ? (top8 ?? []).slice(0, topN) : [];
   const showBoard = Boolean(showTopBoard && rows.length);
+  const title = roundTitle || roundName || 'Select a round';
   return (
-    <div className={`scoreboard${showBoard ? ' has-top8' : ''}`}>
-      <h2 className="round-title">{roundName || 'Select a round'}</h2>
-      <div className="score-tiles">
-        {games?.length ? (
-          games.map((game) => <ScoreTile key={game.id} game={game} />)
-        ) : (
-          <div className="waiting">No games in this round</div>
-        )}
+    <div
+      className={`scoreboard${showBoard ? ' has-top8' : ''}${specialtyTheme ? ` specialty-${specialtyTheme}` : ''}`}
+      style={specialtyStyle(specialtyColors)}
+    >
+      <h2 className="round-title">{title}</h2>
+      <div className="score-main">
+        <SpecialtyPin url={specialtyPinUrl} name={specialtyName} />
+        <div className="score-tiles">
+          {games?.length ? (
+            games.map((game) => <ScoreTile key={game.id} game={game} />)
+          ) : (
+            <div className="waiting">No games in this round</div>
+          )}
+        </div>
       </div>
       {showBoard ? <Top8 rows={rows} live={live} topN={topN} /> : null}
     </div>
@@ -589,6 +627,7 @@ function collectSlideMedia(slide) {
   push(slide.logoUrl);
   push(slide.homeLogoUrl);
   push(slide.awayLogoUrl);
+  push(slide.specialtyPinUrl);
   push(slide.winner?.photoUrl);
   push(slide.winner?.logoUrl);
   for (const pick of slide.picks ?? []) {
@@ -796,8 +835,14 @@ export function AudienceApp() {
   const season = slide?.season || state?.season;
   const voteScale = voteScaleForSlide(slide, state?.competition);
 
+  const specialtyTheme = slide?.specialtyTheme || null;
+  const specialtyColors = slide?.specialtyColors || null;
+
   return (
-    <div className={`stage type-${slide?.type ?? 'empty'}`}>
+    <div
+      className={`stage type-${slide?.type ?? 'empty'}${specialtyTheme ? ` specialty-${specialtyTheme}` : ''}`}
+      style={specialtyStyle(specialtyColors)}
+    >
       <StageHeader state={state} title={slide?.medalTitle || 'Medal Count'} season={season} />
 
       {!slide && <div className="waiting">Open Presentation, then press Next</div>}
@@ -813,6 +858,11 @@ export function AudienceApp() {
       {slide?.type === 'round' && (
         <ScoreboardPanel
           roundName={slide.roundName}
+          roundTitle={slide.roundTitle || slide.roundName}
+          specialtyName={slide.specialtyName}
+          specialtyTheme={slide.specialtyTheme}
+          specialtyPinUrl={slide.specialtyPinUrl}
+          specialtyColors={slide.specialtyColors}
           games={slide.games}
           top8={slide.board}
           topN={liveN}
@@ -822,25 +872,32 @@ export function AudienceApp() {
 
       {slide?.type === 'match' && (
         <div className="game-with-tally">
-          <div className={`match-slide${slide.forfeit ? ' is-forfeit' : ''}`}>
-            {slide.forfeit ? (
-              <div className="forfeit-banner">
-                <b>{slide.forfeitLine || 'Forfeit'}</b>
-              </div>
-            ) : null}
-            <ClubSide logo={slide.homeLogoUrl} score={slide.forfeit ? null : slide.homeScoreLine} />
-            <span className="vs">
-              <em>v</em>
-            </span>
-            <ClubSide logo={slide.awayLogoUrl} score={slide.forfeit ? null : slide.awayScoreLine} />
+          <div className="match-main">
+            <SpecialtyPin url={slide.specialtyPinUrl} name={slide.specialtyName} />
+            <div className={`match-slide${slide.forfeit ? ' is-forfeit' : ''}`}>
+              {slide.forfeit ? (
+                <div className="forfeit-banner">
+                  <b>{slide.forfeitLine || 'Forfeit'}</b>
+                </div>
+              ) : null}
+              <ClubSide logo={slide.homeLogoUrl} score={slide.forfeit ? null : slide.homeScoreLine} />
+              <span className="vs">
+                <em>v</em>
+              </span>
+              <ClubSide logo={slide.awayLogoUrl} score={slide.forfeit ? null : slide.awayScoreLine} />
+            </div>
           </div>
           <Top8 rows={slide.board} live topN={liveN} />
         </div>
       )}
 
       {slide?.type === 'votes' && (
-        <div className="votes-stage has-tally">
+        <div
+          className={`votes-stage has-tally${specialtyTheme ? ` specialty-${specialtyTheme}` : ''}`}
+          style={specialtyStyle(specialtyColors)}
+        >
           <div className="votes-main">
+            <SpecialtyPin url={slide.specialtyPinUrl} name={slide.specialtyName} />
             {slide.showMatchScore !== false ? (
               <div className="votes-scoreboard">
                 <ScoreTile game={slide} />

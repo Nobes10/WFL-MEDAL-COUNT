@@ -9,6 +9,7 @@
 html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 
 .stage {
+  position: relative;
   height: 100%;
   padding: 18px 28px 20px;
   display: flex;
@@ -69,9 +70,19 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   gap: 12px 16px;
   align-items: stretch;
 }
+.game-with-tally .match-main {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
 .game-with-tally .match-slide {
   flex: 1;
   min-width: 0;
+  width: 100%;
 }
 .match-slide {
   flex-wrap: wrap;
@@ -202,6 +213,15 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   height: 100%;
   display: flex;
   flex-direction: column;
+  align-items: center;
+}
+.votes-main .specialty-pin {
+  margin: 0 0 10px;
+  flex: 0 0 auto;
+}
+.votes-main .votes-scoreboard,
+.votes-main .votes-row {
+  width: 100%;
 }
 .votes-stage.has-tally .top8,
 .game-with-tally .top8 {
@@ -255,7 +275,8 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   place-items: center;
   background: rgba(8, 10, 14, 0.35);
   border: 2px dashed rgba(227, 179, 65, 0.28);
-  border-radius: 18px;
+  /* Match the vote-count pill end-cap (~half its height), not a full capsule. */
+  border-radius: 28px;
 }
 .vote-slot b {
   font-size: clamp(72px, 9vw, 140px);
@@ -274,6 +295,7 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   align-items: center;
   justify-content: center;
   padding: 48px 6px 144px;
+  border-radius: 28px;
   box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.28);
 }
 .vote-card-bg {
@@ -1097,6 +1119,137 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   color: #fff;
   text-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+.score-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+}
+.specialty-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 0 auto;
+  padding: 8px 16px 8px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  max-width: min(720px, 92%);
+  pointer-events: none;
+  flex: 0 0 auto;
+}
+.specialty-pin img {
+  width: clamp(48px, 4.8vw, 72px);
+  height: clamp(48px, 4.8vw, 72px);
+  object-fit: contain;
+  border-radius: 50%;
+  background: #fff;
+  flex: 0 0 auto;
+}
+.specialty-pin span {
+  font-size: clamp(14px, 1.35vw, 22px);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #fff;
+  line-height: 1.15;
+}
+.stage.specialty-pink .specialty-pin,
+.scoreboard.specialty-pink .specialty-pin,
+.votes-stage.specialty-pink .specialty-pin {
+  background: linear-gradient(90deg, rgba(138, 42, 85, 0.85), rgba(232, 121, 168, 0.55));
+  border-color: transparent;
+}
+.stage.specialty-indigenous .specialty-pin,
+.scoreboard.specialty-indigenous .specialty-pin,
+.votes-stage.specialty-indigenous .specialty-pin {
+  background: linear-gradient(90deg, rgba(26, 26, 26, 0.9), rgba(196, 92, 18, 0.7));
+  border-color: transparent;
+}
+.stage.specialty-mental .specialty-pin,
+.scoreboard.specialty-mental .specialty-pin,
+.votes-stage.specialty-mental .specialty-pin {
+  background: linear-gradient(90deg, rgba(14, 107, 98, 0.85), rgba(64, 196, 180, 0.55));
+  border-color: transparent;
+}
+.stage.specialty-safety .specialty-pin,
+.scoreboard.specialty-safety .specialty-pin,
+.votes-stage.specialty-safety .specialty-pin {
+  background: linear-gradient(90deg, rgba(122, 10, 10, 0.85), rgba(214, 10, 10, 0.55));
+  border-color: transparent;
+}
+.stage.specialty-cup .specialty-pin,
+.scoreboard.specialty-cup .specialty-pin,
+.votes-stage.specialty-cup .specialty-pin {
+  background: linear-gradient(90deg, rgba(138, 106, 28, 0.9), rgba(227, 179, 65, 0.65));
+  border-color: transparent;
+}
+.stage.specialty-twilight .specialty-pin,
+.scoreboard.specialty-twilight .specialty-pin,
+.votes-stage.specialty-twilight .specialty-pin {
+  background: linear-gradient(90deg, rgba(36, 80, 122, 0.9), rgba(143, 180, 232, 0.55));
+  border-color: transparent;
+}
+.stage.specialty-themed,
+.scoreboard.specialty-themed {
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--specialty-a) 44%, transparent), transparent 42%),
+    radial-gradient(circle at bottom left, color-mix(in srgb, var(--specialty-a) 22%, transparent), transparent 48%),
+    radial-gradient(circle at bottom left, color-mix(in srgb, var(--specialty-b) 16%, transparent), transparent 40%),
+    var(--specialty-bg, #07090d);
+}
+.stage.specialty-themed .specialty-pin,
+.scoreboard.specialty-themed .specialty-pin,
+.votes-stage.specialty-themed .specialty-pin {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--specialty-a) 82%, #000),
+    color-mix(in srgb, var(--specialty-b) 55%, transparent)
+  );
+  border-color: transparent;
+}
+.stage.specialty-pink,
+.scoreboard.specialty-pink {
+  background:
+    radial-gradient(circle at top right, rgba(232, 121, 168, 0.34), transparent 42%),
+    radial-gradient(circle at bottom left, rgba(138, 42, 85, 0.28), transparent 44%),
+    #140912;
+}
+.stage.specialty-pink .specialty-pill,
+.scoreboard.specialty-pink .specialty-pill {
+  background: linear-gradient(90deg, #8a2a55, #e879a8);
+  border-color: transparent;
+}
+.stage.specialty-indigenous .specialty-pill,
+.scoreboard.specialty-indigenous .specialty-pill {
+  background: linear-gradient(90deg, #1a1a1a, #c45c12 48%, #c9a227);
+  border-color: transparent;
+}
+.stage.specialty-mental .specialty-pill,
+.scoreboard.specialty-mental .specialty-pill {
+  background: linear-gradient(90deg, #0e6b62, #40c4b4);
+  border-color: transparent;
+}
+.stage.specialty-safety .specialty-pill,
+.scoreboard.specialty-safety .specialty-pill {
+  background: linear-gradient(90deg, #7a0a0a, #d60a0a);
+  border-color: transparent;
+}
+.stage.specialty-cup .specialty-pill,
+.scoreboard.specialty-cup .specialty-pill {
+  background: linear-gradient(90deg, #8a6a1c, #e3b341);
+  color: #1a1408;
+  border-color: transparent;
+}
+.stage.specialty-twilight .specialty-pill,
+.scoreboard.specialty-twilight .specialty-pill {
+  background: linear-gradient(90deg, #24507a, #8fb4e8);
+  border-color: transparent;
+}
 .score-tiles {
   flex: 1 1 auto;
   min-height: 0;
@@ -1197,6 +1350,9 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 .scoreboard.has-top8 .round-title {
   grid-column: 1 / -1;
   font-size: clamp(48px, 6.2vw, 92px);
+}
+.scoreboard.has-top8 .score-main {
+  min-width: 0;
 }
 .scoreboard.has-top8 .score-tiles {
   width: 100%;

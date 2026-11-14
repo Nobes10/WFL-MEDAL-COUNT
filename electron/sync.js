@@ -23,9 +23,17 @@ import {
   WORDPRESS_CLUB_LOGOS,
   EXTRA_CLUB_LOGOS,
   venueDisplayName,
+  mergeSettings,
 } from './constants.js';
 import { fetchJson, fetchBuffer, mapPool } from './http.js';
 import { applyFixtureScores } from './score.js';
+import { enrichSpecialtyRounds } from './playhq.js';
+import {
+  applySpecialtyRoundOverrides,
+  normalizeSpecialtyName,
+  rememberSpecialtyWebsiteRounds,
+  roundSpecialtyName,
+} from './specialty.js';
 
 function forfeitFields(home, away) {
   const homeOutcome = home?.outcome ?? null;
@@ -243,6 +251,21 @@ function keepVotes(previousGame) {
   return previousGame?.votes ? { ...emptyVotes(), ...previousGame.votes } : emptyVotes();
 }
 
+function previousSpecialtyMeta(store, gradeId, roundId, roundName) {
+  for (const grade of store.grades ?? []) {
+    if (String(grade.id) !== String(gradeId)) continue;
+    for (const round of grade.rounds ?? []) {
+      if (String(round.id) === String(roundId) || String(round.name) === String(roundName)) {
+        return {
+          name: round.specialtyName || roundSpecialtyName(round) || '',
+          source: round.specialtySource === 'manual' ? 'playhq' : round.specialtySource || '',
+        };
+      }
+    }
+  }
+  return { name: '', source: '' };
+}
+
 function previousPlayerPhoto(previousGame, playerId) {
   return previousGame?.players?.find((player) => player.id === playerId)?.photoFile ?? null;
 }
@@ -261,10 +284,11 @@ export async function syncSeason(store, paths, onProgress, gradeIndexes = null) 
   const clubsById = new Map((store.clubs ?? []).map((club) => [club.id, { ...club }]));
   let work = [];
 
-  onProgress?.('Loading fixtures…');
+  onProgress?.('Connecting to MatchDay…');
   const firstFixture = await fetchJson(
     `${MATCHDAY_BASE}/get_widget_fixture_data.php?id=${WIDGET_USER_ID}&grade=0&getLogos=true&season=0`
   );
+  onProgress?.('Loading fixtures…');
   const discovered = [
     ...mensGradeIndexesFrom(firstFixture?.grades),
     ...womenGradeIndexesFrom(firstFixture?.grades),
@@ -276,8 +300,13 @@ export async function syncSeason(store, paths, onProgress, gradeIndexes = null) 
         ? discovered
         : mensGradeIndexesFrom(firstFixture?.grades);
 
-  for (const gradeIndex of indexes) {
-    onProgress?.(`Loading fixtures (grade ${gradeIndex + 1})…`);
+  for (const [step, gradeIndex] of indexes.entries()) {
+    const knownName = firstFixture?.grades?.[gradeIndex]?.gradeName;
+    onProgress?.(
+      `Loading fixtures · ${knownName || `grade ${gradeIndex + 1}`} (${step + 1}/${indexes.length})…`,
+      step + 1,
+      indexes.length
+    );
     const fixture =
       gradeIndex === 0
         ? firstFixture
@@ -318,6 +347,8 @@ export async function syncSeason(store, paths, onProgress, gradeIndexes = null) 
             id: game.id,
             status: game.status,
             date: game.schedule?.[0]?.dateTime ?? null,
+            url: game.url || prev?.url || null,
+            alias: normalizeSpecialtyName(prev?.alias) || '',
             homeId: home?.id ?? null,
             awayId: away?.id ?? null,
             homeName: clubsById.get(home?.id)?.name ?? 'Home',
@@ -329,6 +360,13 @@ export async function syncSeason(store, paths, onProgress, gradeIndexes = null) 
             votes: keepVotes(prev),
           };
         }),
+        ...(() => {
+          const meta = previousSpecialtyMeta(store, String(gradeIndex), round.id, round.name);
+          return {
+            specialtyName: normalizeSpecialtyName(meta.name),
+            specialtySource: meta.source,
+          };
+        })(),
       });
     }
 
@@ -354,6 +392,7 @@ export async function syncSeason(store, paths, onProgress, gradeIndexes = null) 
     }
   }
 
+  onProgress?.('Downloading WFL logo & club logos…');
   await ensureWflLogo(paths);
   await ensureWebsiteClubLogos(paths);
   const clubs = [...clubsById.values()].sort((a, b) => {
@@ -416,6 +455,32 @@ export async function syncSeason(store, paths, onProgress, gradeIndexes = null) 
     });
   }
 
+  try {
+    const specialty = await enrichSpecialtyRounds(grades, onProgress);
+    if (specialty?.ok) {
+      onProgress?.(
+        specialty.applied
+          ? `Specialty rounds ready · ${specialty.applied} labels`
+          : specialty.rounds
+            ? `Specialty rounds checked · ${specialty.rounds} themed rounds`
+            : 'Specialty rounds checked · none labelled on PlayHQ yet'
+      );
+    } else if (specialty?.reason) {
+      onProgress?.(`Specialty rounds skipped · ${specialty.reason}`);
+    }
+  } catch (error) {
+    onProgress?.(`Specialty rounds skipped · ${error?.message || error}`);
+  }
+
+  const remembered = rememberSpecialtyWebsiteRounds(grades, store.settings);
+  if (remembered.changed) {
+    store.settings = mergeSettings({
+      ...store.settings,
+      specialtyAssets: remembered.assets,
+    });
+  }
+  applySpecialtyRoundOverrides(grades, store.settings);
+
   store.grades = sortGrades(grades);
   store.clubs = [...clubsById.values()];
   store.season = grades[0]?.season ?? store.season;
@@ -456,6 +521,7 @@ export async function refreshFixtureScores(store, gradeId = null, paths = null) 
         const home = (game.teams ?? []).find((team) => team.isHomeTeam);
         const away = (game.teams ?? []).find((team) => !team.isHomeTeam);
         existing.status = game.status;
+        if (game.url) existing.url = game.url;
         const surfaceId = String(game.schedule?.[0]?.playingSurfaceId ?? '');
         const venueName = venueDisplayName(surfaces.get(surfaceId));
         if (venueName) existing.venueName = venueName;

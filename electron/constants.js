@@ -1,3 +1,5 @@
+import { mergeSpecialtyAssets } from './specialty.js';
+
 export const WIDGET_USER_ID = 'b02d2018-5333-4fdb-bff7-e2834ebd23c7';
 export const MATCHDAY_BASE = 'https://matchdaydata.com.au/matchday/react_php_scripts';
 export const PHOTO_BASE = 'https://matchdaydata.syd1.cdn.digitaloceanspaces.com/players';
@@ -458,6 +460,7 @@ export const DEFAULT_SETTINGS = {
   crowdPhotoCode: '',
   crowdArtFile: null,
   crowdArtVersion: 0,
+  specialtyAssets: {},
   medalTitles: Object.fromEntries(
     Object.entries(GRADE_PROFILES).map(([key, profile]) => [key, profile.medalTitle])
   ),
@@ -488,6 +491,10 @@ export function mergeSettings(raw = {}) {
   next.crowdArtFile = next.crowdArtFile ? String(next.crowdArtFile) : null;
   next.crowdArtVersion = Number(next.crowdArtVersion) || 0;
   next.presentTarget = next.presentTarget === 'obs' ? 'obs' : 'display';
+  next.specialtyAssets = mergeSpecialtyAssets({
+    ...DEFAULT_SETTINGS.specialtyAssets,
+    ...(incoming.specialtyAssets ?? {}),
+  });
   next.medalTitles = { ...DEFAULT_SETTINGS.medalTitles, ...(incoming.medalTitles ?? {}) };
   next.gradeLabels = { ...DEFAULT_SETTINGS.gradeLabels, ...(incoming.gradeLabels ?? {}) };
   if (next.gradeLabels['A Grade Women'] === "Women's") {

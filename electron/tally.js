@@ -10,7 +10,27 @@ import {
   voteKeyForPoints,
   voteScaleForGrade,
 } from './constants.js';
+import {
+  displayRoundTitle,
+  formatSpecialtyName,
+  roundSpecialtyName,
+  specialtyPresentation,
+} from './specialty.js';
 import { scoreFields } from './score.js';
+
+function specialtySlideFields(round, game = null, settings = null) {
+  const specialtyName = formatSpecialtyName(
+    normalizeGameAlias(game) || roundSpecialtyName(round)
+  );
+  return {
+    ...specialtyPresentation(settings, specialtyName, round?.specialtyPinFile || null),
+    roundTitle: displayRoundTitle(round),
+  };
+}
+
+function normalizeGameAlias(game) {
+  return formatSpecialtyName(game?.alias || '');
+}
 
 export function playerName(player) {
   const first = String(player?.firstName ?? '').trim();
@@ -341,12 +361,14 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
         gradeId: grade.id,
         roundId: round.id,
         roundName: round.name,
+        ...specialtySlideFields(round, null, s),
         medalTitle: grade.medalTitle,
         season: grade.season,
         topN,
         games: (round.games ?? []).map((game) => ({
           id: game.id,
           status: game.status,
+          alias: normalizeGameAlias(game) || null,
           homeName: game.homeName,
           awayName: game.awayName,
           venueName: game.venueName || '',
@@ -368,6 +390,7 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
           gradeId: grade.id,
           roundId: round.id,
           roundName: round.name,
+          ...specialtySlideFields(round, game, s),
           gameId: game.id,
           medalTitle: grade.medalTitle,
           season: grade.season,
@@ -393,6 +416,7 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
         gradeId: grade.id,
         roundId: round.id,
         roundName: round.name,
+        ...specialtySlideFields(round, game, s),
         gameId: game.id,
         gradeName: grade.name,
         medalTitle: grade.medalTitle,
@@ -428,13 +452,15 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
     }
 
     if (s.showLeaderboardAfterRound) {
+      const through = displayRoundTitle(round) || round.name;
       slides.push({
         type: 'leaderboard',
         gradeId: grade.id,
         roundId: round.id,
         roundName: round.name,
+        ...specialtySlideFields(round, null, s),
         medalTitle: grade.medalTitle,
-        throughRound: round.name,
+        throughRound: through,
         topN,
         board: tallyGrade(grade, clubs, round.id, s).slice(0, topN),
       });
