@@ -3,7 +3,6 @@ import { tmpdir } from 'os';
 import { basename, extname, join } from 'path';
 import { canonicalClubKey, displayLeagueClubName } from './constants.js';
 import { playerName } from './tally.js';
-import { cutOutPlayerPhoto } from './photoCutout.js';
 
 function displayClubName(rawName) {
   const raw = String(rawName || '').trim();
@@ -333,6 +332,7 @@ async function saveCutoutImport(paths, playerId, sourcePath) {
   try {
     const staged = join(scratch, `src${extname(original) || '.jpg'}`);
     copyFileSync(original, staged);
+    const { cutOutPlayerPhoto } = await import('./photoCutout.js');
     await cutOutPlayerPhoto(staged, dest);
   } finally {
     try {

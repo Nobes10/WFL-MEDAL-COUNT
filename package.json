@@ -1,6 +1,6 @@
 {
   "name": "wfl-medal-count",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Whyalla Football League medal count — enter 3-2-1 before the night, present offline",
   "author": "Whyalla Football League",
   "private": true,
@@ -34,9 +34,11 @@
       "package.json"
     ],
     "asar": true,
+    "npmRebuild": false,
     "asarUnpack": [
       "node_modules/@imgly/**/*",
       "node_modules/sharp/**/*",
+      "node_modules/onnxruntime-node/**/*",
       "node_modules/@imgly/background-removal-node/**/*"
     ],
     "win": {
@@ -68,9 +70,12 @@
   },
   "dependencies": {
     "@imgly/background-removal-node": "^1.4.5",
+    "color-name": "^1.1.4",
+    "color-string": "^1.9.1",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "sharp": "^0.32.6"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
