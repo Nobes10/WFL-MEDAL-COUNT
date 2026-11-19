@@ -139,6 +139,7 @@ export function LifeMembers({ state }) {
                       <small>
                         {player.clubName}
                         {player.position ? ` · ${player.position}` : ''}
+                        {player.photoImported ? ' · imported photo' : ''}
                         {used ? ' · already added' : ''}
                       </small>
                     </span>

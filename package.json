@@ -1,6 +1,6 @@
 {
   "name": "wfl-medal-count",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Whyalla Football League medal count — enter 3-2-1 before the night, present offline",
   "author": "Whyalla Football League",
   "private": true,
@@ -11,6 +11,7 @@
     "icon": "node scripts/make-icon.mjs",
     "build": "npm run icon && vite build && node scripts/build-electron.mjs",
     "start": "npm run build && electron .",
+    "start:app": "electron .",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "publish:win": "npm run build && electron-builder --win --publish always"
@@ -33,6 +34,11 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "node_modules/@imgly/**/*",
+      "node_modules/sharp/**/*",
+      "node_modules/@imgly/background-removal-node/**/*"
+    ],
     "win": {
       "target": [
         "nsis",
@@ -61,6 +67,7 @@
     }
   },
   "dependencies": {
+    "@imgly/background-removal-node": "^1.4.5",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

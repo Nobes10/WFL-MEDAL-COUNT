@@ -432,6 +432,127 @@ export function uniqueVotes(votes, scale = MEN_VOTE_SCALE) {
   return next;
 }
 
+/** Umpire pay bands — role counts follow the WFL day sheet (league vs juniors/reserves). */
+export const UMPIRE_PAY_ROLE_TYPES = [
+  { id: 'field', label: 'Field' },
+  { id: 'emergency', label: 'Emergency Field' },
+  { id: 'boundary', label: 'Boundary' },
+  { id: 'goal', label: 'Goal' },
+];
+
+export const UMPIRE_PAY_BANDS = [
+  { id: 'u12', label: "U/12's", order: 0, counts: { field: 2, emergency: 1, boundary: 2, goal: 2 } },
+  { id: 'u15', label: "U/15's", order: 1, counts: { field: 2, emergency: 1, boundary: 2, goal: 2 } },
+  { id: 'u18', label: "U/18's", order: 2, counts: { field: 2, emergency: 1, boundary: 2, goal: 2 } },
+  // Reserves get an extra field umpire (3), same as League.
+  { id: 'reserves', label: 'Reserves', order: 3, counts: { field: 3, emergency: 1, boundary: 2, goal: 2 } },
+  { id: 'league', label: 'League', order: 4, counts: { field: 3, emergency: 1, boundary: 4, goal: 2 } },
+  { id: 'women', label: 'Women', order: 5, counts: { field: 3, emergency: 1, boundary: 2, goal: 2 } },
+];
+
+/** League + Reserves store separate Field rates for a 2-umpire or 3-umpire crew. */
+export const UMPIRE_PAY_DUAL_FIELD_BANDS = new Set(['reserves', 'league']);
+
+const EMPTY_UMPIRE_ROLE_RATES = (bandId) => {
+  const rates = Object.fromEntries(UMPIRE_PAY_ROLE_TYPES.map((role) => [role.id, '']));
+  if (UMPIRE_PAY_DUAL_FIELD_BANDS.has(bandId)) {
+    rates.field2 = '';
+    rates.field3 = '';
+  }
+  return rates;
+};
+
+export const DEFAULT_UMPIRE_PAY_RATES = Object.fromEntries(
+  UMPIRE_PAY_BANDS.map((band) => [band.id, EMPTY_UMPIRE_ROLE_RATES(band.id)])
+);
+
+export function umpirePayRatesForBand(payRates, bandId) {
+  const rates = payRates && typeof payRates === 'object' ? payRates : {};
+  if (rates[bandId] && typeof rates[bandId] === 'object') return rates[bandId];
+  // Legacy crew2 / crew3 keys from the short-lived shared-crew settings.
+  if (UMPIRE_PAY_DUAL_FIELD_BANDS.has(bandId) && rates.crew3) return rates.crew3;
+  if (!UMPIRE_PAY_DUAL_FIELD_BANDS.has(bandId) && rates.crew2) return rates.crew2;
+  return {};
+}
+
+export function umpirePayBandIdForGrade(grade) {
+  const text = `${grade?.sourceName || ''} ${grade?.name || ''} ${grade?.medalTitle || ''}`.toLowerCase();
+  if (grade?.women === true || grade?.women === 'true' || /women|leverington|\bwwfl\b/.test(text)) {
+    return 'women';
+  }
+  if (/u\s*\/?\s*12|under\s*12|\b12s?\b/.test(text)) return 'u12';
+  if (/u\s*\/?\s*15|under\s*15|\b15s?\b/.test(text)) return 'u15';
+  if (/u\s*\/?\s*18|under\s*18|\b18s?\b/.test(text)) return 'u18';
+  if (/reserve/.test(text)) return 'reserves';
+  if (/a\s*grade|league|hewitson/.test(text)) return 'league';
+  return 'league';
+}
+
+export function umpirePayBandForId(bandId) {
+  return UMPIRE_PAY_BANDS.find((band) => band.id === bandId) || UMPIRE_PAY_BANDS.find((b) => b.id === 'league');
+}
+
+export function umpireRolesForBand(bandId) {
+  const band = umpirePayBandForId(bandId);
+  const roles = [];
+  for (const type of UMPIRE_PAY_ROLE_TYPES) {
+    const count = Math.max(0, Number(band.counts?.[type.id]) || 0);
+    for (let i = 1; i <= count; i += 1) {
+      roles.push({
+        id: `${type.id}-${i}`,
+        type: type.id,
+        label: type.label,
+      });
+    }
+  }
+  return roles;
+}
+
+function normalizeUmpireRateValue(value) {
+  if (value === '' || value == null) return '';
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.round(n * 100) / 100) : '';
+}
+
+function normalizeUmpireRoleRates(bandId, src = {}) {
+  const next = EMPTY_UMPIRE_ROLE_RATES(bandId);
+  for (const key of Object.keys(next)) {
+    next[key] = normalizeUmpireRateValue(src?.[key]);
+  }
+  if (UMPIRE_PAY_DUAL_FIELD_BANDS.has(bandId)) {
+    // Older single `field` value becomes the 3-umpire rate when field3 is empty.
+    if (next.field3 === '' && src?.field != null && src.field !== '') {
+      next.field3 = normalizeUmpireRateValue(src.field);
+    }
+    if (next.field2 === '' && src?.crew2?.field != null) {
+      next.field2 = normalizeUmpireRateValue(src.crew2.field);
+    }
+  }
+  return next;
+}
+
+export function mergeUmpirePayRates(raw = {}) {
+  const incoming = raw && typeof raw === 'object' ? raw : {};
+  const next = {};
+  for (const band of UMPIRE_PAY_BANDS) {
+    const direct = incoming[band.id] && typeof incoming[band.id] === 'object' ? incoming[band.id] : {};
+    let src = { ...direct };
+    // Migrate short-lived crew2/crew3 settings into grade rows.
+    if (UMPIRE_PAY_DUAL_FIELD_BANDS.has(band.id) && incoming.crew3 && typeof incoming.crew3 === 'object') {
+      src = {
+        ...incoming.crew3,
+        ...direct,
+        field3: direct.field3 ?? direct.field ?? incoming.crew3.field,
+        field2: direct.field2 ?? incoming.crew2?.field,
+      };
+    } else if (!UMPIRE_PAY_DUAL_FIELD_BANDS.has(band.id) && incoming.crew2 && typeof incoming.crew2 === 'object') {
+      src = { ...incoming.crew2, ...direct };
+    }
+    next[band.id] = normalizeUmpireRoleRates(band.id, src);
+  }
+  return next;
+}
+
 export const DEFAULT_SETTINGS = {
   leagueName: 'Whyalla Football League',
   showTitleSlide: true,
@@ -461,6 +582,7 @@ export const DEFAULT_SETTINGS = {
   crowdArtFile: null,
   crowdArtVersion: 0,
   specialtyAssets: {},
+  umpirePayRates: DEFAULT_UMPIRE_PAY_RATES,
   medalTitles: Object.fromEntries(
     Object.entries(GRADE_PROFILES).map(([key, profile]) => [key, profile.medalTitle])
   ),
@@ -497,6 +619,10 @@ export function mergeSettings(raw = {}) {
   });
   next.medalTitles = { ...DEFAULT_SETTINGS.medalTitles, ...(incoming.medalTitles ?? {}) };
   next.gradeLabels = { ...DEFAULT_SETTINGS.gradeLabels, ...(incoming.gradeLabels ?? {}) };
+  next.umpirePayRates = mergeUmpirePayRates({
+    ...DEFAULT_UMPIRE_PAY_RATES,
+    ...(incoming.umpirePayRates ?? {}),
+  });
   if (next.gradeLabels['A Grade Women'] === "Women's") {
     next.gradeLabels['A Grade Women'] = DEFAULT_SETTINGS.gradeLabels['A Grade Women'];
   }
@@ -568,30 +694,93 @@ export const TOTY_FIELD_POSITIONS = [
   { id: 'fp-r', label: 'FP', name: 'Forward pocket', x: 78, y: 86 },
 ];
 
-export const TOTY_BENCH_POSITIONS = [
-  { id: 'int-1', label: 'INT', name: 'Interchange 1' },
-  { id: 'int-2', label: 'INT', name: 'Interchange 2' },
-  { id: 'int-3', label: 'INT', name: 'Interchange 3' },
-  { id: 'int-4', label: 'INT', name: 'Interchange 4' },
-];
+export const TOTY_DEFAULT_BENCH_COUNT = 4;
+export const TOTY_MIN_BENCH_COUNT = 0;
+export const TOTY_MAX_BENCH_COUNT = 8;
 
-export const TOTY_POSITIONS = [...TOTY_FIELD_POSITIONS, ...TOTY_BENCH_POSITIONS];
+export function clampTotyBenchCount(count) {
+  const n = Math.floor(Number(count));
+  if (!Number.isFinite(n)) return TOTY_DEFAULT_BENCH_COUNT;
+  return Math.min(TOTY_MAX_BENCH_COUNT, Math.max(TOTY_MIN_BENCH_COUNT, n));
+}
+
+export function totyBenchPositions(count = TOTY_DEFAULT_BENCH_COUNT) {
+  const n = clampTotyBenchCount(count);
+  return Array.from({ length: n }, (_, index) => ({
+    id: `int-${index + 1}`,
+    label: 'INT',
+    name: `Interchange ${index + 1}`,
+  }));
+}
+
+export function totyPositions(benchCount = TOTY_DEFAULT_BENCH_COUNT) {
+  return [...TOTY_FIELD_POSITIONS, ...totyBenchPositions(benchCount)];
+}
+
+export function isTotyBenchId(value) {
+  return /^int-\d+$/.test(String(value || ''));
+}
+
+export function isTotyPositionId(value, benchCount = TOTY_DEFAULT_BENCH_COUNT) {
+  const id = String(value || '');
+  if (TOTY_FIELD_POSITIONS.some((pos) => pos.id === id)) return true;
+  const match = /^int-(\d+)$/.exec(id);
+  if (!match) return false;
+  const index = Number(match[1]);
+  return index >= 1 && index <= clampTotyBenchCount(benchCount);
+}
+
+export function maxTotyBenchIndex(teamOfTheYear) {
+  let max = 0;
+  if (!teamOfTheYear || typeof teamOfTheYear !== 'object') return max;
+  for (const picks of Object.values(teamOfTheYear)) {
+    if (!picks || typeof picks !== 'object') continue;
+    for (const key of Object.keys(picks)) {
+      const match = /^int-(\d+)$/.exec(key);
+      if (match) max = Math.max(max, Number(match[1]));
+    }
+  }
+  return max;
+}
+
+export function inferTotyBenchCount(teamOfTheYear, storedCount) {
+  if (storedCount != null && storedCount !== '' && Number.isFinite(Number(storedCount))) {
+    return clampTotyBenchCount(storedCount);
+  }
+  const max = maxTotyBenchIndex(teamOfTheYear);
+  return max > 0 ? clampTotyBenchCount(max) : TOTY_DEFAULT_BENCH_COUNT;
+}
+
+export const TOTY_BENCH_POSITIONS = totyBenchPositions(TOTY_DEFAULT_BENCH_COUNT);
+export const TOTY_POSITIONS = totyPositions(TOTY_DEFAULT_BENCH_COUNT);
 export const TOTY_POSITION_IDS = new Set(TOTY_POSITIONS.map((item) => item.id));
 
-export const TOTY_REVEAL_LINES = [
+const TOTY_FIELD_REVEAL_LINES = [
   { id: 'forwards', label: 'Forward line', short: 'FP · FF · FP', spots: ['fp-l', 'ff', 'fp-r'] },
   { id: 'half-forwards', label: 'Half-forward line', short: 'HF · CHF · HF', spots: ['hff-l', 'chf', 'hff-r'] },
   { id: 'centre', label: 'Centre line', short: 'W · C · W', spots: ['w-l', 'c', 'w-r'] },
   { id: 'half-backs', label: 'Half-back line', short: 'HB · CHB · HB', spots: ['hbf-l', 'chb', 'hbf-r'] },
   { id: 'backs', label: 'Back line', short: 'BP · FB · BP', spots: ['bp-l', 'fb', 'bp-r'] },
   { id: 'followers', label: 'Ruck & rovers', short: 'R · RR · ROV', spots: ['ruck', 'rr', 'rov'] },
-  { id: 'bench', label: 'Interchange', short: 'INT', spots: ['int-1', 'int-2', 'int-3', 'int-4'] },
 ];
 
-function buildTotyBeats() {
-  const byId = new Map(TOTY_POSITIONS.map((pos) => [pos.id, pos]));
+export function totyRevealLines(benchCount = TOTY_DEFAULT_BENCH_COUNT) {
+  const bench = totyBenchPositions(benchCount);
+  if (!bench.length) return TOTY_FIELD_REVEAL_LINES.slice();
+  return [
+    ...TOTY_FIELD_REVEAL_LINES,
+    { id: 'bench', label: 'Interchange', short: 'INT', spots: bench.map((pos) => pos.id) },
+  ];
+}
+
+export const TOTY_REVEAL_LINES = totyRevealLines(TOTY_DEFAULT_BENCH_COUNT);
+
+export function buildTotyBeats(benchCount = TOTY_DEFAULT_BENCH_COUNT) {
+  const positions = totyPositions(benchCount);
+  const lines = totyRevealLines(benchCount);
+  const byId = new Map(positions.map((pos) => [pos.id, pos]));
   const beats = [];
-  TOTY_REVEAL_LINES.forEach((line, lineIndex) => {
+  lines.forEach((line, lineIndex) => {
     const spots = line.spots.map((spotId) => {
       const pos = byId.get(spotId);
       return { spotId, posLabel: pos?.label ?? '', posName: pos?.name ?? '' };
@@ -610,39 +799,78 @@ function buildTotyBeats() {
   });
   beats.push({
     type: 'field',
-    lineIndex: TOTY_REVEAL_LINES.length - 1,
+    lineIndex: Math.max(0, lines.length - 1),
     lineId: 'team',
     lineLabel: 'Team of the Year',
     short: 'Full team',
-    revealStep: TOTY_REVEAL_LINES.length,
+    revealStep: lines.length,
   });
   return beats;
 }
 
-export const TOTY_BEATS = buildTotyBeats();
+export const TOTY_BEATS = buildTotyBeats(TOTY_DEFAULT_BENCH_COUNT);
 
-export function clampTotyStep(step) {
+export function clampTotyStep(step, benchCount = TOTY_DEFAULT_BENCH_COUNT) {
+  const beats = buildTotyBeats(benchCount);
   const n = Number(step);
-  const max = Math.max(0, TOTY_BEATS.length - 1);
+  const max = Math.max(0, beats.length - 1);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.min(max, Math.floor(n));
 }
 
-export function totyBeatAt(step) {
-  return TOTY_BEATS[clampTotyStep(step)] ?? TOTY_BEATS[0] ?? null;
+export function totyBeatAt(step, benchCount = TOTY_DEFAULT_BENCH_COUNT) {
+  const beats = buildTotyBeats(benchCount);
+  return beats[clampTotyStep(step, benchCount)] ?? beats[0] ?? null;
 }
 
-export function totyRevealedIds(lineCount) {
-  const n = Math.max(0, Math.min(TOTY_REVEAL_LINES.length, Math.floor(Number(lineCount) || 0)));
+export function totyRevealedIds(lineCount, benchCount = TOTY_DEFAULT_BENCH_COUNT) {
+  const lines = totyRevealLines(benchCount);
+  const n = Math.max(0, Math.min(lines.length, Math.floor(Number(lineCount) || 0)));
   const ids = [];
-  for (const line of TOTY_REVEAL_LINES.slice(0, n)) {
+  for (const line of lines.slice(0, n)) {
     ids.push(...line.spots);
   }
   return ids;
 }
 
-export function emptyTotyPicks() {
-  return Object.fromEntries(TOTY_POSITIONS.map((item) => [item.id, null]));
+export function emptyTotyPicks(benchCount = TOTY_DEFAULT_BENCH_COUNT) {
+  return Object.fromEntries(totyPositions(benchCount).map((item) => [item.id, null]));
+}
+
+export function resizeTotyBenchPicks(picks, fromCount, toCount) {
+  const next = { ...(picks && typeof picks === 'object' && !Array.isArray(picks) ? picks : {}) };
+  const from = clampTotyBenchCount(fromCount);
+  const to = clampTotyBenchCount(toCount);
+  const values = [];
+  for (let i = 1; i <= from; i += 1) {
+    values.push(next[`int-${i}`] ? String(next[`int-${i}`]) : null);
+  }
+  for (let i = 1; i <= Math.max(from, to); i += 1) {
+    delete next[`int-${i}`];
+  }
+  for (let i = 0; i < to; i += 1) {
+    next[`int-${i + 1}`] = values[i] ?? null;
+  }
+  return next;
+}
+
+export function removeTotyBenchSlot(picks, positionId, benchCount) {
+  const match = /^int-(\d+)$/.exec(String(positionId || ''));
+  if (!match) return { picks, benchCount: clampTotyBenchCount(benchCount) };
+  const removeAt = Number(match[1]);
+  const count = clampTotyBenchCount(benchCount);
+  if (removeAt < 1 || removeAt > count) return { picks, benchCount: count };
+  const next = { ...(picks && typeof picks === 'object' && !Array.isArray(picks) ? picks : {}) };
+  const values = [];
+  for (let i = 1; i <= count; i += 1) {
+    if (i === removeAt) continue;
+    values.push(next[`int-${i}`] ? String(next[`int-${i}`]) : null);
+  }
+  for (let i = 1; i <= count; i += 1) delete next[`int-${i}`];
+  values.forEach((value, index) => {
+    next[`int-${index + 1}`] = value;
+  });
+  return { picks: next, benchCount: values.length };
 }
 
 export const WFL_MEMBER_CLUB_ID = 'wfl-member';
@@ -702,18 +930,78 @@ export function clampLifeMemberStep(step, count) {
   return Math.min(max, Math.floor(n));
 }
 
-export function normalizeToty(raw) {
+export function normalizeToty(raw, benchCount = TOTY_DEFAULT_BENCH_COUNT) {
   const next = {};
+  const count = clampTotyBenchCount(benchCount);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return next;
   for (const [gradeId, picks] of Object.entries(raw)) {
     if (!picks || typeof picks !== 'object' || Array.isArray(picks)) continue;
-    const clean = emptyTotyPicks();
-    for (const pos of TOTY_POSITIONS) {
+    const clean = emptyTotyPicks(count);
+    for (const pos of totyPositions(count)) {
       const value = picks[pos.id];
       clean[pos.id] = value ? String(value) : null;
     }
     next[String(gradeId)] = clean;
   }
+  return next;
+}
+
+/** Leadership roles for Team of the Year (not club captain from PlayHQ). */
+export const TOTY_CAPTAIN_ROLES = [
+  { id: 'captain', label: 'Captain', short: 'C', unique: true },
+  { id: 'co_captain', label: 'Co-captain', short: 'CC', unique: false },
+  { id: 'vice_captain', label: 'Vice captain', short: 'VC', unique: false },
+  { id: 'deputy_vice_captain', label: 'Deputy vice captain', short: 'DVC', unique: false },
+];
+
+export const TOTY_CAPTAIN_ROLE_IDS = new Set(TOTY_CAPTAIN_ROLES.map((role) => role.id));
+
+export function totyCaptainRoleById(roleId) {
+  return TOTY_CAPTAIN_ROLES.find((role) => role.id === String(roleId || '')) ?? null;
+}
+
+export function normalizeTotyCaptains(raw, teamOfTheYear = {}) {
+  const next = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return next;
+  for (const [gradeId, leaders] of Object.entries(raw)) {
+    if (!leaders || typeof leaders !== 'object' || Array.isArray(leaders)) continue;
+    const picks = teamOfTheYear?.[gradeId] ?? {};
+    const pickedIds = new Set(
+      Object.values(picks)
+        .filter(Boolean)
+        .map((id) => String(id))
+    );
+    const clean = {};
+    const uniqueTaken = new Set();
+    for (const [playerId, roleId] of Object.entries(leaders)) {
+      const pid = String(playerId || '');
+      const role = totyCaptainRoleById(roleId);
+      if (!pid || !role) continue;
+      if (pickedIds.size && !pickedIds.has(pid)) continue;
+      if (role.unique && uniqueTaken.has(role.id)) continue;
+      if (role.unique) uniqueTaken.add(role.id);
+      clean[pid] = role.id;
+    }
+    next[String(gradeId)] = clean;
+  }
+  return next;
+}
+
+export function setTotyCaptainAssignment(leaders, playerId, roleId) {
+  const next = { ...(leaders && typeof leaders === 'object' && !Array.isArray(leaders) ? leaders : {}) };
+  const pid = String(playerId || '');
+  if (!pid) return next;
+  const role = totyCaptainRoleById(roleId);
+  if (!role) {
+    delete next[pid];
+    return next;
+  }
+  if (role.unique) {
+    for (const [otherId, otherRole] of Object.entries(next)) {
+      if (otherId !== pid && otherRole === role.id) delete next[otherId];
+    }
+  }
+  next[pid] = role.id;
   return next;
 }
 
@@ -1006,6 +1294,8 @@ export function createEmptyStore() {
     competition: 'wfl',
     audienceView: 'presentation',
     teamOfTheYear: {},
+    teamOfTheYearCaptains: {},
+    totyBenchCount: TOTY_DEFAULT_BENCH_COUNT,
     totySponsorId: null,
     totyStep: 0,
     lifeMembers: [],

@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { clampCueStep, clampLifeMemberStep, clampTotyStep, CLUB_LOGO_OVERRIDES, WOMEN_CLUB_LOGO_OVERRIDES, createEmptyStore, mergeSettings, normalizeAudienceView, normalizeLifeMembers, normalizeNightExtras, normalizePresentationQueue, normalizeToty } from './constants.js';
+import { clampCueStep, clampLifeMemberStep, clampTotyStep, CLUB_LOGO_OVERRIDES, WOMEN_CLUB_LOGO_OVERRIDES, createEmptyStore, inferTotyBenchCount, mergeSettings, normalizeAudienceView, normalizeLifeMembers, normalizeNightExtras, normalizePresentationQueue, normalizeToty, normalizeTotyCaptains } from './constants.js';
 
 export function storePaths(userData) {
   const root = join(userData, 'wfl-medal-count');
@@ -75,8 +75,22 @@ export function loadStore(paths) {
       },
       settings: mergeSettings(parsed.settings),
       competition: parsed.competition === 'wwfl' ? 'wwfl' : 'wfl',
-      teamOfTheYear: normalizeToty(parsed.teamOfTheYear),
-      totyStep: clampTotyStep(parsed.totyStep),
+      teamOfTheYear: normalizeToty(
+        parsed.teamOfTheYear,
+        inferTotyBenchCount(parsed.teamOfTheYear, parsed.totyBenchCount)
+      ),
+      teamOfTheYearCaptains: normalizeTotyCaptains(
+        parsed.teamOfTheYearCaptains,
+        normalizeToty(
+          parsed.teamOfTheYear,
+          inferTotyBenchCount(parsed.teamOfTheYear, parsed.totyBenchCount)
+        )
+      ),
+      totyBenchCount: inferTotyBenchCount(parsed.teamOfTheYear, parsed.totyBenchCount),
+      totyStep: clampTotyStep(
+        parsed.totyStep,
+        inferTotyBenchCount(parsed.teamOfTheYear, parsed.totyBenchCount)
+      ),
       lifeMembers: normalizeLifeMembers(parsed.lifeMembers),
       lifeMemberStep: clampLifeMemberStep(parsed.lifeMemberStep, normalizeLifeMembers(parsed.lifeMembers).length),
       nightExtras: normalizeNightExtras(parsed.nightExtras),
@@ -94,7 +108,20 @@ export function saveStore(paths, store) {
   writeFileSync(paths.dataFile, JSON.stringify(rest, null, 2), 'utf8');
 }
 
+let mediaRevision = 0;
+
+export function bumpMediaRevision() {
+  mediaRevision = Date.now();
+  return mediaRevision;
+}
+
+export function getMediaRevision() {
+  return mediaRevision;
+}
+
 export function mediaUrl(kind, fileName) {
   if (!fileName) return null;
-  return `medal://${kind}/${encodeURIComponent(fileName)}`;
+  const base = `medal://${kind}/${encodeURIComponent(fileName)}`;
+  if (kind === 'photos' && mediaRevision) return `${base}?v=${mediaRevision}`;
+  return base;
 }

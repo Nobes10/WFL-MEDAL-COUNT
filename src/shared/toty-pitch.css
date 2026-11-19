@@ -7,6 +7,7 @@
   align-items: stretch;
 }
 .afl-field-wrap {
+  position: relative;
   container-type: size;
   min-width: 0;
   min-height: 0;
@@ -15,6 +16,58 @@
   place-items: center;
   background: #050505;
   border-radius: 10px;
+}
+.toty-followers-tl {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  width: min(320px, 38%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+.toty-followers-tl > * { pointer-events: auto; }
+.toty-followers-tl h3 {
+  margin: 0 0 2px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+}
+.toty-followers-tl .toty-side-slot,
+.toty-followers-tl .toty-side-slot-wrap .toty-side-slot {
+  margin-bottom: 0;
+  width: 100%;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 10px 10px 6px;
+  background: rgba(26, 22, 18, 0.94);
+  backdrop-filter: blur(4px);
+}
+.toty-followers-tl .toty-side-slot .toty-frame {
+  width: 68px;
+  height: 82px;
+}
+.toty-followers-tl .toty-names {
+  overflow: visible;
+  min-width: 0;
+}
+.toty-followers-tl .toty-names em {
+  font-size: 10px;
+}
+.toty-followers-tl .toty-names strong {
+  font-size: clamp(14px, 1.5vw, 20px);
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.05;
+}
+.toty-followers-tl .toty-names small {
+  font-size: 11px;
+  white-space: normal;
+  overflow: visible;
 }
 .afl-field {
   --oval-w: min(100cqw, calc(100cqh * 0.758));
@@ -77,6 +130,62 @@ button.toty-spot:hover { border-color: #e3b341; z-index: 3; }
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted, #8b9bb0);
+}
+.toty-bench-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.toty-bench-head h3 { margin: 0; }
+.toty-bench-add {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #f0e6c8;
+  background: #2a241c;
+  border: 1px solid #5a4d3a;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.toty-bench-add:hover {
+  border-color: #e3b341;
+  color: #fff;
+}
+.toty-bench-empty {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted, #8b9bb0);
+}
+.toty-side-slot-wrap {
+  position: relative;
+  margin-bottom: 5px;
+}
+.toty-side-slot-wrap .toty-side-slot { margin-bottom: 0; width: 100%; }
+.toty-slot-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+  color: #f0e6c8;
+  background: #3a2a22;
+  border: 1px solid #5a4d3a;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.toty-slot-remove:hover {
+  border-color: #e3b341;
+  color: #fff;
+  background: #4a3428;
 }
 .toty-side-slot {
   width: 100%;
@@ -145,6 +254,29 @@ button.toty-side-slot:hover { border-color: #e3b341; }
   font-weight: 800;
   color: #8a7a55;
 }
+.toty-captain-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 2;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  background: #c5a059;
+  color: #1a140e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.toty-captain-badge.role-captain { background: #e3b341; }
+.toty-captain-badge.role-co_captain { background: #d4a574; }
+.toty-captain-badge.role-vice_captain { background: #c5a059; }
+.toty-captain-badge.role-deputy_vice_captain { background: #9a8458; color: #f7f1e4; }
 .toty-tab {
   position: absolute;
   left: 50%;

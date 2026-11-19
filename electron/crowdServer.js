@@ -80,7 +80,7 @@ function sendPage({ venues, leagueName, shortName, hasLogo }) {
   const short = esc(shortName || 'WFL');
   const league = esc(leagueName || 'Whyalla Football League');
   const markSize = (shortName || 'WFL').length > 3 ? '13px' : '18px';
-  const brandMark = hasLogo && shortName !== 'WWFL'
+  const brandMark = hasLogo
     ? '<img src="/brand" alt="" />'
     : `<div class="mark" style="font-size:${markSize}">${short}</div>`;
   return `<!doctype html>

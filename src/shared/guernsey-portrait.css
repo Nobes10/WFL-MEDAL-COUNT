@@ -1,0 +1,20 @@
+.guernsey-portrait {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.guernsey-portrait canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.guernsey-portrait.announce {
+  align-self: center;
+  width: auto;
+  height: min(58vh, 520px);
+  aspect-ratio: 5 / 6;
+  margin: 0 auto;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.35));
+}

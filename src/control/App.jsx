@@ -1,6 +1,12 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  UMPIRE_PAY_BANDS,
+  UMPIRE_PAY_DUAL_FIELD_BANDS,
+  UMPIRE_PAY_ROLE_TYPES,
+} from '../../electron/constants.js';
 import { NormalizedLogo } from '../shared/NormalizedLogo.jsx';
+import { UmpireEnvelopeCard, UmpirePaySheet, UmpireSlipCard, UmpireSlips } from './UmpireSlips.jsx';
 const TeamOfTheYear = lazy(() => import('./TeamOfTheYear.jsx').then((mod) => ({ default: mod.TeamOfTheYear })));
 const LifeMembers = lazy(() => import('./LifeMembers.jsx').then((mod) => ({ default: mod.LifeMembers })));
 const CrowdPhotos = lazy(() => import('./CrowdPhotos.jsx').then((mod) => ({ default: mod.CrowdPhotos })));
@@ -525,6 +531,7 @@ function AwardSearchMenu({ anchorRef, open, matches, selectedId, onPick }) {
               <small>
                 {player.clubName}
                 {player.gradeNames?.length ? ` · ${player.gradeNames.join(', ')}` : ''}
+                {player.photoImported ? ' · imported photo' : ''}
               </small>
             </span>
           </button>
@@ -695,6 +702,7 @@ function ControlHome({
   onOpenLife,
   onOpenGoalkicker,
   onOpenCrowd,
+  onOpenUmpireSlips,
   onOpenGrade,
 }) {
   return (
@@ -711,6 +719,9 @@ function ControlHome({
         </button>
         <button type="button" onClick={onShowNight}>
           Presentation
+        </button>
+        <button type="button" onClick={onOpenUmpireSlips}>
+          Pre-season print
         </button>
         <button disabled={state.sync?.running} type="button" onClick={() => api.syncSeason()}>
           {state.sync?.running ? 'Syncing…' : 'Sync from website'}
@@ -843,6 +854,20 @@ function ControlHome({
             </em>
           </span>
         </button>
+        <button type="button" className="home-grade" data-tone="cue" onClick={onOpenUmpireSlips}>
+          <span className="home-grade-shine" aria-hidden="true" />
+          <span className="home-grade-medal" aria-hidden="true">PS</span>
+          <small>Print</small>
+          <span className="home-grade-foot">
+            <strong>Pre-season print</strong>
+            <span className="home-grade-bar" aria-hidden="true">
+              <span style={{ width: '100%' }} />
+            </span>
+            <em>
+              Vote slips · envelopes · pay sheets
+            </em>
+          </span>
+        </button>
         </div>
       </div>
     </div>
@@ -872,11 +897,14 @@ export function App() {
   const [printJob, setPrintJob] = useState(null);
   const [announcerOpen, setAnnouncerOpen] = useState(false);
   const [announcerIds, setAnnouncerIds] = useState([]);
+  const [missingPhotosModal, setMissingPhotosModal] = useState(null);
+  const gradeCompleteRef = useRef(new Map());
   const [presoStarts, setPresoStarts] = useState(readPresoStarts);
   const [runsheetByComp, setRunsheetByComp] = useState(loadRunsheetState);
   const [runsheetDrag, setRunsheetDrag] = useState(null);
   const [competition, setCompetition] = useState(readCompetition);
   const [nightSaved, setNightSaved] = useState(false);
+  const [nightImported, setNightImported] = useState(false);
   const [saveFolder, setSaveFolder] = useState('');
   const [votesScale, setVotesScale] = useState(readVotesScale);
   const runsheetDragHandle = useRef(false);
@@ -889,6 +917,38 @@ export function App() {
       /* ignore storage failures */
     }
   }, [votesScale]);
+
+  useEffect(() => {
+    const grades = state?.grades;
+    if (!Array.isArray(grades)) return;
+    const seen = gradeCompleteRef.current;
+    if (seen.size === 0) {
+      for (const item of grades) {
+        const complete = item?.progress?.total > 0 && item.progress.done >= item.progress.total;
+        seen.set(item.id, complete);
+      }
+      return;
+    }
+    if (missingPhotosModal) return;
+    for (const item of grades) {
+      const complete = item?.progress?.total > 0 && item.progress.done >= item.progress.total;
+      if (!complete) {
+        seen.set(item.id, false);
+        continue;
+      }
+      if (seen.get(item.id) === true) continue;
+      const players = playersMissingPhotos(item);
+      seen.set(item.id, true);
+      if (!players.length) continue;
+      setMissingPhotosModal({
+        gradeId: item.id,
+        gradeName: item.name,
+        medalTitle: item.medalTitle,
+        players,
+      });
+      break;
+    }
+  }, [state?.grades, missingPhotosModal]);
 
   useEffect(() => {
     function onMove(event) {
@@ -925,6 +985,24 @@ export function App() {
     window.setTimeout(() => setNightSaved(false), 1600);
   }
 
+  async function importNight() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+    const ok = window.confirm(
+      'Import a saved vote file? This replaces votes, Team of the Year, awards, and life members with what is in that file.'
+    );
+    if (!ok) return;
+    const result = await api.importNight();
+    if (result?.canceled) return;
+    if (result?.error) {
+      window.alert(`Could not import: ${result.error}`);
+      return;
+    }
+    if (result?.file) setSaveFolder(result.file);
+    setNightImported(true);
+    window.setTimeout(() => setNightImported(false), 1600);
+  }
+
   useEffect(() => {
     if (!printJob) return undefined;
     if (printJob.action === 'save') {
@@ -952,11 +1030,19 @@ export function App() {
     const done = () => setPrintJob(null);
     const root = document.documentElement;
     if (printJob.kind === 'announcer') root.classList.add('print-announcer');
+    if (
+      printJob.kind === 'umpire-slips' ||
+      printJob.kind === 'umpire-envelopes' ||
+      printJob.kind === 'umpire-pay'
+    ) {
+      root.classList.add('print-umpire-slips');
+    }
     window.addEventListener('afterprint', done);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener('afterprint', done);
       root.classList.remove('print-announcer');
+      root.classList.remove('print-umpire-slips');
     };
   }, [printJob]);
 
@@ -1350,6 +1436,17 @@ export function App() {
           )}
           <button
             type="button"
+            onClick={importNight}
+            title={
+              saveFolder
+                ? `Last file: ${saveFolder}`
+                : 'Import a saved vote file (votes, Team of the year, awards, life members)'
+            }
+          >
+            {nightImported ? 'Imported' : 'Import'}
+          </button>
+          <button
+            type="button"
             onClick={saveNight}
             title={
               saveFolder
@@ -1379,6 +1476,7 @@ export function App() {
           ['votes', 'Enter votes'],
           ['board', 'Leaderboard'],
           ['show', 'Presentation'],
+          ['umpire', 'Pre-season print'],
           ['crowd', 'Crowd photos'],
           ['sponsors', 'Sponsors'],
           ['settings', 'Settings'],
@@ -1389,7 +1487,13 @@ export function App() {
         ))}
       </nav>
 
-      {tab !== 'settings' && tab !== 'toty' && tab !== 'lifemembers' && tab !== 'show' && tab !== 'home' && tab !== 'crowd' ? (
+      {tab !== 'settings' &&
+      tab !== 'toty' &&
+      tab !== 'lifemembers' &&
+      tab !== 'show' &&
+      tab !== 'home' &&
+      tab !== 'crowd' &&
+      tab !== 'umpire' ? (
       <div className="grades">
         {visibleGrades.map((item) => {
           const complete = item.progress.total > 0 && item.progress.done >= item.progress.total;
@@ -1644,10 +1748,20 @@ export function App() {
           onOpenLife={() => setTab('lifemembers')}
           onOpenGoalkicker={() => setTab('show')}
           onOpenCrowd={() => setTab('crowd')}
+          onOpenUmpireSlips={() => setTab('umpire')}
           onOpenGrade={(gradeId) => {
             api.setActiveGrade(gradeId);
             setTab('votes');
           }}
+        />
+      )}
+
+      {tab === 'umpire' && (
+        <UmpireSlips
+          state={state}
+          grades={visibleGrades}
+          competition={competition}
+          onPrint={setPrintJob}
         />
       )}
 
@@ -2107,7 +2221,137 @@ export function App() {
         }}
       />
     ) : null}
-    </>
+    {missingPhotosModal ? (
+      <MissingPhotosModal
+        gradeName={missingPhotosModal.gradeName}
+        medalTitle={missingPhotosModal.medalTitle}
+        players={missingPhotosModal.players}
+        onClose={() => setMissingPhotosModal(null)}
+      />
+    ) : null}
+  </>
+  );
+}
+
+function playersMissingPhotos(grade) {
+  return (grade?.leaderboard ?? [])
+    .filter((row) => row?.id && !row.photoUrl && !row.photoFile)
+    .map((row) => ({
+      id: row.id,
+      name: row.name || 'Unknown',
+      clubName: row.clubName || 'Unknown club',
+      number: row.number || '',
+    }))
+    .sort((a, b) => {
+      const club = String(a.clubName).localeCompare(String(b.clubName));
+      if (club) return club;
+      return String(a.name).localeCompare(String(b.name));
+    });
+}
+
+function missingPhotosText(gradeName, medalTitle, players) {
+  const lines = [
+    'Players without photos',
+    gradeName ? `Grade: ${gradeName}` : null,
+    medalTitle ? `Medal: ${medalTitle}` : null,
+    '',
+  ].filter((line) => line != null);
+  let lastClub = null;
+  for (const player of players) {
+    if (player.clubName !== lastClub) {
+      if (lastClub != null) lines.push('');
+      lines.push(player.clubName);
+      lastClub = player.clubName;
+    }
+    const number = player.number ? `${player.number}. ` : '';
+    lines.push(`  ${number}${player.name}`);
+  }
+  if (!players.length) lines.push('All voted players have a photo.');
+  return `${lines.join('\n')}\n`;
+}
+
+function missingPhotosFileName(gradeName) {
+  const safe = String(gradeName || 'grade')
+    .replace(/[^\w]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `WFL-missing-photos-${safe || 'grade'}.txt`;
+}
+
+function MissingPhotosModal({ gradeName, medalTitle, players, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [savedAs, setSavedAs] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  async function saveList() {
+    setBusy(true);
+    setSavedAs('');
+    try {
+      const result = await api.saveTextFile({
+        title: 'Save players without photos',
+        defaultName: missingPhotosFileName(gradeName),
+        content: missingPhotosText(gradeName, medalTitle, players),
+      });
+      if (result?.canceled) return;
+      if (result?.error) {
+        window.alert(`Could not save: ${result.error}`);
+        return;
+      }
+      if (result?.file) setSavedAs(result.file);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyList() {
+    await api.copyText(missingPhotosText(gradeName, medalTitle, players));
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  }
+
+  return (
+    <div className="modal-back" onClick={onClose} role="presentation">
+      <div
+        className="modal missing-photos-modal"
+        role="dialog"
+        aria-labelledby="missing-photos-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h3 id="missing-photos-title">Players without photos</h3>
+        <p className="muted">
+          {gradeName || 'This grade'} is fully voted.
+          {players.length
+            ? ` ${players.length} player${players.length === 1 ? '' : 's'} on the tally still need a photo.`
+            : ' Every voted player already has a photo.'}
+        </p>
+        {players.length ? (
+          <ul className="missing-photos-list">
+            {players.map((player) => (
+              <li key={player.id}>
+                <strong>
+                  {player.number ? `${player.number}. ` : ''}
+                  {player.name}
+                </strong>
+                <small>{player.clubName}</small>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="missing-photos-empty">Nothing to chase for photos.</p>
+        )}
+        <div className="row">
+          <button className="primary" type="button" disabled={!players.length || busy} onClick={saveList}>
+            {busy ? 'Saving…' : 'Save list'}
+          </button>
+          <button type="button" disabled={!players.length} onClick={copyList}>
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        {savedAs ? <p className="muted missing-photos-saved">Saved to {savedAs}</p> : null}
+      </div>
+    </div>
   );
 }
 
@@ -2355,6 +2599,7 @@ function PrintSheet({ job }) {
     [{ id: 'one', title: job.title, rounds: job.rounds ?? [] }];
   const many = sections.length > 1;
   const cues = job.cues ?? [];
+  const umpireSlips = job.slips ?? [];
   const head = (
     <header className="print-head">
       {job.logoUrl ? <img src={job.logoUrl} alt="" /> : null}
@@ -2373,6 +2618,63 @@ function PrintSheet({ job }) {
       Announcer copy · {job.action === 'save' ? 'saved' : 'printed'} {new Date().toLocaleString()}
     </p>
   );
+  if (job.kind === 'umpire-slips') {
+    const pages = [];
+    for (let i = 0; i < umpireSlips.length; i += 3) {
+      pages.push(umpireSlips.slice(i, i + 3));
+    }
+    return (
+      <div className="print-sheet umpire-slips-print">
+        {pages.map((pageSlips, pageIndex) => (
+          <div
+            key={`slip-page-${pageIndex}`}
+            className={`umpire-slip-page${pageIndex ? ' is-break' : ''}`}
+          >
+            {pageSlips.map((slip) => (
+              <UmpireSlipCard
+                key={slip.id}
+                slip={slip}
+                leagueName={job.leagueName}
+                logoUrl={job.logoUrl}
+                season={job.season}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (job.kind === 'umpire-envelopes') {
+    return (
+      <div className="print-sheet umpire-envelopes-print">
+        <div className="umpire-envelope-sheet">
+          {umpireSlips.map((slip) => (
+            <UmpireEnvelopeCard
+              key={slip.id}
+              slip={slip}
+              leagueName={job.leagueName}
+              logoUrl={job.logoUrl}
+              season={job.season}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (job.kind === 'umpire-pay') {
+    return (
+      <div className="print-sheet umpire-pay-print">
+        <UmpirePaySheet
+          slips={umpireSlips}
+          sheets={job.sheets}
+          leagueName={job.leagueName}
+          logoUrl={job.logoUrl}
+          season={job.season}
+          payRates={job.payRates}
+        />
+      </div>
+    );
+  }
   return (
     <div className={`print-sheet${job.kind === 'announcer' ? ' announcer' : ''}${job.kind === 'runsheet' ? ' runsheet' : ''}`}>
       {job.kind === 'announcer' ? null : head}
@@ -2632,6 +2934,175 @@ function AnnouncerPicker({ grades, selectedIds, onChange, onCancel, onPrint, onS
   );
 }
 
+async function runPlayerPhotoImport(action) {
+  const result = await action();
+  if (result?.canceled) return;
+  if (result?.error || result?.ok === false) {
+    window.alert(result.error || 'Could not import player photos.');
+    return;
+  }
+  const bits = [`Imported ${result.matched} player photo${result.matched === 1 ? '' : 's'}`];
+  if (result.name) bits[0] = `Imported photo for ${result.name}`;
+  if (result.keptWebsite) {
+    bits.push(`${result.keptWebsite} already had a website photo and were left alone`);
+  }
+  if (result.unmatched) {
+    bits.push(`${result.unmatched} file${result.unmatched === 1 ? '' : 's'} unmatched`);
+  }
+  window.alert(
+    `${bits.join(' · ')}. Backgrounds are cut out to match MatchDay photos. Sync from website replaces any MatchDay has.`
+  );
+}
+
+function groupImportedPhotosByClub(photos) {
+  const groups = [];
+  const byClub = new Map();
+  for (const photo of photos ?? []) {
+    const clubKey = String(photo.clubKey || photo.clubName || 'Unknown club').trim() || 'Unknown club';
+    const clubName = String(photo.clubName || 'Unknown club').trim() || 'Unknown club';
+    let group = byClub.get(clubKey);
+    if (!group) {
+      group = { clubKey, clubName, photos: [] };
+      byClub.set(clubKey, group);
+      groups.push(group);
+    }
+    group.photos.push(photo);
+  }
+  return groups;
+}
+
+function formatPhotoRounds(rounds) {
+  const list = (rounds ?? []).filter(Boolean);
+  if (!list.length) return 'Not on a team sheet yet';
+  if (list.length <= 3) return list.join(' · ');
+  return `${list.slice(0, 3).join(' · ')} · +${list.length - 3} more`;
+}
+
+function ImportedPlayerPhotos({ photos }) {
+  const groups = useMemo(() => groupImportedPhotosByClub(photos), [photos]);
+
+  return (
+    <div className="imported-photos-block">
+      <div className="imported-photos-head">
+        <h4>Imported player photos</h4>
+        <button type="button" onClick={() => api.refreshAudiencePhotos()}>
+          Refresh audience photos
+        </button>
+      </div>
+      {groups.length ? (
+        <div className="imported-photos-clubs">
+          {groups.map((group) => (
+            <section key={group.clubKey} className="imported-photos-club">
+              <header className="imported-photos-club-head">
+                <h5>{group.clubName}</h5>
+                <span>
+                  {group.photos.length} photo{group.photos.length === 1 ? '' : 's'}
+                </span>
+              </header>
+              <ul className="imported-photos-grid">
+                {group.photos.map((photo) => (
+                  <li key={photo.id} className="imported-photo-card">
+                    {photo.photoUrl ? <img src={photo.photoUrl} alt="" /> : <i />}
+                    <div className="imported-photo-copy">
+                      <strong>
+                        {photo.number ? `${photo.number}. ` : ''}
+                        {photo.name}
+                      </strong>
+                      <small title={(photo.rounds ?? []).join('\n')}>
+                        {formatPhotoRounds(photo.rounds)}
+                      </small>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Delete the imported photo for ${photo.name}? The audience will refresh. Sync can bring a MatchDay photo back later.`
+                            )
+                          ) {
+                            api.deleteImportedPlayerPhoto(photo.id);
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">No PC imports yet. Use Import player photos above.</p>
+      )}
+    </div>
+  );
+}
+
+function AssignPlayerPhoto({ roster }) {
+  const [query, setQuery] = useState('');
+  const matches = useMemo(() => {
+    const hay = query.trim().toLowerCase();
+    if (!hay) return [];
+    return (roster ?? [])
+      .filter((player) =>
+        `${player.name} ${player.number} ${player.clubName}`.toLowerCase().includes(hay)
+      )
+      .slice(0, 8);
+  }, [query, roster]);
+
+  return (
+    <div className="assign-player-photo">
+      <label className="settings-field">
+        <strong>Assign a photo to one player</strong>
+        <small>Search a player, then choose any image file — the filename does not need to match.</small>
+        <input
+          type="text"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Name, number or club"
+          autoComplete="off"
+        />
+      </label>
+      {query.trim() ? (
+        <ul className="assign-player-list">
+          {matches.map((player) => (
+            <li key={player.id}>
+              <button
+                type="button"
+                disabled={Boolean(player.photoUrl) && !player.photoImported}
+                title={
+                  player.photoUrl && !player.photoImported
+                    ? 'Already has a website photo'
+                    : 'Choose a photo file'
+                }
+                onClick={async () => {
+                  await runPlayerPhotoImport(() => api.importPlayerPhotoForPlayer(player.id));
+                  setQuery('');
+                }}
+              >
+                {player.photoUrl ? <img src={player.photoUrl} alt="" /> : <i />}
+                <span>
+                  <strong>
+                    {player.number ? `${player.number}. ` : ''}
+                    {player.name}
+                  </strong>
+                  <small>
+                    {player.clubName}
+                    {player.photoImported ? ' · imported' : player.photoUrl ? ' · website photo' : ''}
+                  </small>
+                </span>
+              </button>
+            </li>
+          ))}
+          {!matches.length ? <li className="muted">No matching players.</li> : null}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function SettingsPanel({ state, grade, grades }) {
   const s = state.settings ?? {};
   const medalKeys = Object.keys(s.medalTitles ?? {});
@@ -2731,7 +3202,7 @@ function SettingsPanel({ state, grade, grades }) {
                       ? 'Audience is on crowd photos.'
                   : 'Audience is on medal count.'}
           </p>
-          <div className="row">
+          <div className="row settings-actions">
             <button className="primary" onClick={() => api.toggleAudience()}>
               Audience display
             </button>
@@ -2844,6 +3315,183 @@ function SettingsPanel({ state, grade, grades }) {
         </section>
 
         <section>
+          <h3>Crowd photos</h3>
+          <p className="muted">
+            Crowd QR, approve queue, and slideshow timing. Approve photos on the Crowd photos tab.
+          </p>
+          <SettingNumber
+            label="Hold each photo (ms)"
+            hint="How long each approved photo stays on screen (2000–60000)"
+            value={s.crowdHoldMs}
+            min={2000}
+            max={60000}
+            onCommit={(value) => setFlag('crowdHoldMs', value)}
+          />
+          <SettingNumber
+            label="Dissolve (ms)"
+            hint="Crossfade between photos (0–5000)"
+            value={s.crowdFadeMs}
+            min={0}
+            max={5000}
+            onCommit={(value) => setFlag('crowdFadeMs', value)}
+          />
+          <SettingNumber
+            label="Check for new photos (ms)"
+            hint="How often the wall looks for newly approved photos (2000–30000)"
+            value={s.crowdPollMs}
+            min={2000}
+            max={30000}
+            onCommit={(value) => setFlag('crowdPollMs', value)}
+          />
+          <SettingNumber
+            label="Max photos per phone"
+            hint="Cap on how many one sender can upload (1–200)"
+            value={s.crowdMaxPerSender}
+            min={1}
+            max={200}
+            onCommit={(value) => setFlag('crowdMaxPerSender', value)}
+          />
+          <div className="row settings-actions">
+            <button onClick={() => api.pickCrowdArt()}>Pick lower third from desktop</button>
+            {state.crowd?.customArt ? (
+              <button onClick={() => api.clearCrowdArt()}>Use default lower third</button>
+            ) : null}
+            <button onClick={() => api.resetCrowdPhotoCode()}>Reset photo code</button>
+          </div>
+          <p className="muted">Photo code {s.crowdPhotoCode || '…'} never changes on this PC unless you reset it.</p>
+        </section>
+
+        <section>
+          <h3>Names & medals</h3>
+          <p className="muted">Override the grade button labels and medal titles shown to the audience.</p>
+          {medalKeys.map((key) => (
+            <div key={key} className="name-pair">
+              <SettingText
+                label={`${key} label`}
+                value={s.gradeLabels?.[key] ?? ''}
+                onCommit={(value) => api.updateSettings({ gradeLabels: { [key]: value } })}
+              />
+              <SettingText
+                label={`${key} medal`}
+                value={s.medalTitles?.[key] ?? ''}
+                onCommit={(value) => api.updateSettings({ medalTitles: { [key]: value } })}
+              />
+            </div>
+          ))}
+        </section>
+
+        <section>
+          <h3>Live vote count</h3>
+          <p className="muted">
+            Full-screen medal tally for the selected grade. It updates as votes are entered, and sits beside each game in the presentation.
+          </p>
+          <div className="round-picks">
+            {(grades ?? state.grades ?? []).map((item) => (
+              <button
+                key={item.id}
+                className={item.id === grade?.id ? 'active' : ''}
+                onClick={() => api.setActiveGrade(item.id)}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+          <div className="row settings-actions">
+            <button className="primary" onClick={() => api.showScoreboard()}>
+              Show live vote count
+            </button>
+            <button onClick={() => api.showLeaderboard()}>Show full leaderboard</button>
+          </div>
+        </section>
+
+        <section className="settings-span-full">
+          <h3>Umpire pay rates</h3>
+          <p className="muted">
+            Each grade has its own rates. League and Reserves also have separate Field rates for a
+            2-umpire or 3-umpire crew. Reserves includes 3 field umpires on the sheet.
+          </p>
+          <div className="umpire-pay-rates">
+            <table>
+              <thead>
+                <tr>
+                  <th>Grade</th>
+                  <th>Field</th>
+                  <th>Field if 2</th>
+                  <th>Field if 3</th>
+                  {UMPIRE_PAY_ROLE_TYPES.filter((role) => role.id !== 'field').map((role) => (
+                    <th key={role.id}>{role.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {UMPIRE_PAY_BANDS.map((band) => {
+                  const dualField = UMPIRE_PAY_DUAL_FIELD_BANDS.has(band.id);
+                  return (
+                    <tr key={band.id}>
+                      <th scope="row">{band.label}</th>
+                      <td>
+                        {dualField ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <UmpirePayRateInput
+                            value={s.umpirePayRates?.[band.id]?.field ?? ''}
+                            onCommit={(next) =>
+                              api.updateSettings({
+                                umpirePayRates: { [band.id]: { field: next } },
+                              })
+                            }
+                          />
+                        )}
+                      </td>
+                      <td>
+                        {dualField ? (
+                          <UmpirePayRateInput
+                            value={s.umpirePayRates?.[band.id]?.field2 ?? ''}
+                            onCommit={(next) =>
+                              api.updateSettings({
+                                umpirePayRates: { [band.id]: { field2: next } },
+                              })
+                            }
+                          />
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td>
+                        {dualField ? (
+                          <UmpirePayRateInput
+                            value={s.umpirePayRates?.[band.id]?.field3 ?? ''}
+                            onCommit={(next) =>
+                              api.updateSettings({
+                                umpirePayRates: { [band.id]: { field3: next } },
+                              })
+                            }
+                          />
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      {UMPIRE_PAY_ROLE_TYPES.filter((role) => role.id !== 'field').map((role) => (
+                        <td key={role.id}>
+                          <UmpirePayRateInput
+                            value={s.umpirePayRates?.[band.id]?.[role.id] ?? ''}
+                            onCommit={(next) =>
+                              api.updateSettings({
+                                umpirePayRates: { [band.id]: { [role.id]: next } },
+                              })
+                            }
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="settings-span-full">
           <h3>Specialty rounds</h3>
           <p className="muted">
             Sync pulls names from PlayHQ, or add your own. Upload a pin, tweak colours, and choose which round it sits on.
@@ -3018,101 +3666,7 @@ function SettingsPanel({ state, grade, grades }) {
           )}
         </section>
 
-        <section>
-          <h3>Crowd photos</h3>
-          <p className="muted">
-            Crowd QR, approve queue, and slideshow timing. Approve photos on the Crowd photos tab.
-          </p>
-          <SettingNumber
-            label="Hold each photo (ms)"
-            hint="How long each approved photo stays on screen (2000–60000)"
-            value={s.crowdHoldMs}
-            min={2000}
-            max={60000}
-            onCommit={(value) => setFlag('crowdHoldMs', value)}
-          />
-          <SettingNumber
-            label="Dissolve (ms)"
-            hint="Crossfade between photos (0–5000)"
-            value={s.crowdFadeMs}
-            min={0}
-            max={5000}
-            onCommit={(value) => setFlag('crowdFadeMs', value)}
-          />
-          <SettingNumber
-            label="Check for new photos (ms)"
-            hint="How often the wall looks for newly approved photos (2000–30000)"
-            value={s.crowdPollMs}
-            min={2000}
-            max={30000}
-            onCommit={(value) => setFlag('crowdPollMs', value)}
-          />
-          <SettingNumber
-            label="Max photos per phone"
-            hint="Cap on how many one sender can upload (1–200)"
-            value={s.crowdMaxPerSender}
-            min={1}
-            max={200}
-            onCommit={(value) => setFlag('crowdMaxPerSender', value)}
-          />
-          <div className="row">
-            <button onClick={() => api.pickCrowdArt()}>Pick lower third from desktop</button>
-            {state.crowd?.customArt ? (
-              <button onClick={() => api.clearCrowdArt()}>Use default lower third</button>
-            ) : null}
-            <button onClick={() => api.resetCrowdPhotoCode()}>Reset photo code</button>
-          </div>
-          <p className="muted">Photo code {s.crowdPhotoCode || '…'} never changes on this PC unless you reset it.</p>
-        </section>
-
-        <section>
-          <h3>Names & medals</h3>
-          <p className="muted">Override the grade button labels and medal titles shown to the audience.</p>
-          {medalKeys.map((key) => (
-            <div key={key} className="name-pair">
-              <SettingText
-                label={`${key} label`}
-                value={s.gradeLabels?.[key] ?? ''}
-                onCommit={(value) => api.updateSettings({ gradeLabels: { [key]: value } })}
-              />
-              <SettingText
-                label={`${key} medal`}
-                value={s.medalTitles?.[key] ?? ''}
-                onCommit={(value) => api.updateSettings({ medalTitles: { [key]: value } })}
-              />
-            </div>
-          ))}
-        </section>
-
-        <section>
-          <h3>Live vote count</h3>
-          <p className="muted">
-            Full-screen medal tally for the selected grade. It updates as votes are entered, and sits beside each game in the presentation.
-          </p>
-          <div className="round-picks">
-            {(grades ?? state.grades ?? []).map((item) => (
-              <button
-                key={item.id}
-                className={item.id === grade?.id ? 'active' : ''}
-                onClick={() => api.setActiveGrade(item.id)}
-              >
-                {item.name}
-              </button>
-            ))}
-          </div>
-          <div className="row">
-            <button className="primary" onClick={() => api.showScoreboard()}>
-              Show live vote count
-            </button>
-            <button onClick={() => api.showLeaderboard()}>Show full leaderboard</button>
-            <button onClick={() => api.showToty()}>Show team of the year</button>
-            <button onClick={() => api.showLifeMembers()}>Show life members</button>
-            <button onClick={() => api.showSplash()}>Show opening splash</button>
-            <button onClick={() => api.showPresentation()}>Show medal count</button>
-          </div>
-        </section>
-
-        <section>
+        <section className="settings-span-full">
           <h3>Season data</h3>
           <p className="muted">
             {state.season} · {state.sync?.running ? state.sync.message : `Last sync: ${formatWhen(state.lastSyncedAt)}`}
@@ -3120,6 +3674,18 @@ function SettingsPanel({ state, grade, grades }) {
           <div className="row">
             <button className="primary" disabled={state.sync?.running} onClick={() => api.syncSeason()}>
               {state.sync?.running ? 'Syncing…' : 'Sync from website'}
+            </button>
+            <button
+              disabled={state.sync?.running}
+              onClick={() => runPlayerPhotoImport(() => api.importPlayerPhotos())}
+            >
+              Import photo files
+            </button>
+            <button
+              disabled={state.sync?.running}
+              onClick={() => runPlayerPhotoImport(() => api.importPlayerPhotoFolder())}
+            >
+              Import photo folder
             </button>
             <button onClick={() => api.openDataFolder()}>Open data folder</button>
             <button
@@ -3137,8 +3703,14 @@ function SettingsPanel({ state, grade, grades }) {
             </button>
           </div>
           <p className="muted">
-            Random fill picks 3-2-1 on men’s games, 4-3-2-1 on women’s games, and a full League team of the year. Use it to test the presentation or leaderboard.
+            Import one or more photo files, or a whole folder. Name files like First Last.jpg for auto-match, or assign a photo to a player below. Backgrounds are cut out to match MatchDay. Website photos always win when MatchDay has one
+            {state.importedPhotoCount
+              ? ` · ${state.importedPhotoCount} imported photo${state.importedPhotoCount === 1 ? '' : 's'} in use`
+              : ''}
+            .
           </p>
+          <AssignPlayerPhoto roster={state.roster} />
+          <ImportedPlayerPhotos photos={state.importedPhotos} />
           <div className="row">
             <button
               onClick={() => {
@@ -3166,7 +3738,7 @@ function SettingsPanel({ state, grade, grades }) {
           />
         </section>
 
-        <section>
+        <section className="settings-span-full">
           <h3>Hotkeys</h3>
           <p className="muted">
             Work from this window or the audience display. Ignored while you are typing in a field.
@@ -3278,6 +3850,40 @@ function SettingNumber({ label, hint, value, min, max, onCommit }) {
   );
 }
 
+function UmpirePayRateInput({ value, onCommit }) {
+  const [draft, setDraft] = useState(value === '' || value == null ? '' : String(value));
+  useEffect(() => {
+    setDraft(value === '' || value == null ? '' : String(value));
+  }, [value]);
+  function commit() {
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      setDraft('');
+      onCommit('');
+      return;
+    }
+    const next = Number(trimmed);
+    if (!Number.isFinite(next) || next < 0) {
+      setDraft(value === '' || value == null ? '' : String(value));
+      return;
+    }
+    onCommit(next);
+  }
+  return (
+    <input
+      type="number"
+      min={0}
+      step={1}
+      inputMode="decimal"
+      placeholder="—"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => event.key === 'Enter' && event.currentTarget.blur()}
+    />
+  );
+}
+
 function SettingText({ label, hint, value, onCommit }) {
   const [draft, setDraft] = useState(value ?? '');
   useEffect(() => {
@@ -3339,6 +3945,7 @@ function TeamColumn({ name, logo, players, votes, nextPick, onPick }) {
                 <PlayerPhoto src={player.photoUrl} name={player.name} />
                 <span className="who">
                   {player.name}
+                  {player.photoImported ? <small className="photo-imported-label">Imported photo</small> : null}
                   {player.captainRole ? <small>{player.captainRole.replaceAll('_', ' ')}</small> : null}
                 </span>
                 {points ? <b>{points}</b> : null}

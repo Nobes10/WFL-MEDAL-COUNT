@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, unlinkSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, readdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import {
   CLUB_LOGO_BASE,
@@ -34,6 +34,11 @@ import {
   rememberSpecialtyWebsiteRounds,
   roundSpecialtyName,
 } from './specialty.js';
+import {
+  clearLocalPlayerPhotoMarker,
+  findExistingPlayerPhoto,
+  isLocalPlayerPhoto,
+} from './playerPhotos.js';
 
 function forfeitFields(home, away) {
   const homeOutcome = home?.outcome ?? null;
@@ -229,15 +234,48 @@ async function ensureClubLogo(club, paths) {
   }
 }
 
+function removeOtherPlayerPhotoFiles(paths, playerId, keepFile) {
+  const id = String(playerId || '');
+  if (!id) return;
+  try {
+    for (const name of readdirSync(paths.photos)) {
+      if (name === `${id}.local`) continue;
+      if (!name.startsWith(`${id}.`)) continue;
+      if (keepFile && name === keepFile) continue;
+      try {
+        unlinkSync(join(paths.photos, name));
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 async function ensurePlayerPhoto(player, paths) {
-  const fileName = `${player.id}.webp`;
-  const dest = join(paths.photos, fileName);
-  if (existsSync(dest)) {
-    player.photoFile = fileName;
+  const webName = `${player.id}.webp`;
+  const dest = join(paths.photos, webName);
+  const localImport = isLocalPlayerPhoto(paths, player.id);
+  const existing = findExistingPlayerPhoto(paths, player.id);
+
+  // Always try MatchDay when missing or when the current file is only a PC import.
+  // Website/CDN wins and clears the local-import marker.
+  if (!existing || localImport) {
+    const ok = await downloadFile(`${PHOTO_BASE}/${player.id}.webp`, dest, { overwrite: Boolean(localImport) });
+    if (ok) {
+      removeOtherPlayerPhotoFiles(paths, player.id, webName);
+      clearLocalPlayerPhotoMarker(paths, player.id);
+      player.photoFile = webName;
+      return;
+    }
+  }
+
+  if (existing) {
+    player.photoFile = existing;
     return;
   }
-  const ok = await downloadFile(`${PHOTO_BASE}/${player.id}.webp`, dest);
-  if (ok) player.photoFile = fileName;
+  player.photoFile = player.photoFile || null;
 }
 
 async function ensureWflLogo(paths) {

@@ -10,13 +10,13 @@ import {
   shell,
 } from 'electron';
 import { randomUUID } from 'crypto';
-import { copyFileSync, existsSync, readdirSync, unlinkSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, extname, join } from 'path';
 import { printDocument } from './print.js';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, TOTY_POSITIONS, TOTY_POSITION_IDS, leagueGradeFrom, totyGradeFrom, clampTotyStep, clampLifeMemberStep, clampCueStep, GOALKICKER_LAST_STEP, AWARD_LAST_STEP, normalizeLifeMembers, normalizeNightExtra, normalizeNightExtras, TOTY_BEATS, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition, isGoalkickerCue, isAwardCue, voteScaleForGrade, voteKeyForPoints, LEAGUE_CLUB_NAMES, canonicalClubKey, displayLeagueClubName } from './constants.js';
+import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, leagueGradeFrom, totyGradeFrom, clampTotyStep, clampLifeMemberStep, clampCueStep, GOALKICKER_LAST_STEP, AWARD_LAST_STEP, normalizeLifeMembers, normalizeNightExtra, normalizeNightExtras, normalizeToty, normalizeTotyCaptains, setTotyCaptainAssignment, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition, isGoalkickerCue, isAwardCue, voteScaleForGrade, voteKeyForPoints, LEAGUE_CLUB_NAMES, canonicalClubKey, displayLeagueClubName, buildTotyBeats, clampTotyBenchCount, isTotyPositionId, removeTotyBenchSlot, resizeTotyBenchPicks, totyPositions, TOTY_DEFAULT_BENCH_COUNT, TOTY_MAX_BENCH_COUNT } from './constants.js';
 import { playerName } from './tally.js';
-import { ensureStoreDirs, installClubLogoOverrides, loadStore, saveStore, storePaths } from './store.js';
+import { bumpMediaRevision, ensureStoreDirs, installClubLogoOverrides, loadStore, saveStore, storePaths } from './store.js';
 import { syncSeason, refreshFixtureScores, ensureWebsiteClubLogos, applyClubLogoFiles } from './sync.js';
 import { applyPresentationCursor, audienceFromState, decorateState } from './view.js';
 import { broadcastObs, startObsServer } from './obs.js';
@@ -35,6 +35,14 @@ import {
   photosRoot,
   setCustomArtFromPath,
 } from './crowdPhotos.js';
+import {
+  deleteImportedPlayerPhoto,
+  findExistingPlayerPhoto,
+  importPlayerPhotoFiles,
+  importPlayerPhotoForPlayer,
+  importPlayerPhotosFromFolder,
+  recutLocalPlayerPhotos,
+} from './playerPhotos.js';
 import {
   applySpecialtyRoundOverrides,
   formatSpecialtyName,
@@ -89,6 +97,49 @@ function totyStorageGradeId(requested) {
   if (wanted && grades.some((grade) => String(grade.id) === wanted)) return wanted;
   const pool = gradesForCompetition(grades, store?.competition);
   return String(totyGradeFrom(pool)?.id || totyGradeFrom(grades)?.id || '');
+}
+
+function totyBenchCount() {
+  return clampTotyBenchCount(store?.totyBenchCount ?? TOTY_DEFAULT_BENCH_COUNT);
+}
+
+function totyBeats() {
+  return buildTotyBeats(totyBenchCount());
+}
+
+function ensureTotyGradePicks(gradeId) {
+  const id = String(gradeId || '');
+  const count = totyBenchCount();
+  if (!id) return null;
+  if (!store.teamOfTheYear || typeof store.teamOfTheYear !== 'object') store.teamOfTheYear = {};
+  const current = store.teamOfTheYear[id];
+  store.teamOfTheYear[id] = {
+    ...emptyTotyPicks(count),
+    ...(current && typeof current === 'object' && !Array.isArray(current) ? current : {}),
+  };
+  return store.teamOfTheYear[id];
+}
+
+function ensureTotyCaptains(gradeId) {
+  const id = String(gradeId || '');
+  if (!id) return null;
+  if (!store.teamOfTheYearCaptains || typeof store.teamOfTheYearCaptains !== 'object') {
+    store.teamOfTheYearCaptains = {};
+  }
+  if (!store.teamOfTheYearCaptains[id] || typeof store.teamOfTheYearCaptains[id] !== 'object') {
+    store.teamOfTheYearCaptains[id] = {};
+  }
+  return store.teamOfTheYearCaptains[id];
+}
+
+function pruneTotyCaptains(gradeId) {
+  const id = String(gradeId || '');
+  if (!id) return;
+  const picks = store.teamOfTheYear?.[id] ?? {};
+  store.teamOfTheYearCaptains = normalizeTotyCaptains(store.teamOfTheYearCaptains, {
+    ...(store.teamOfTheYear ?? {}),
+    [id]: picks,
+  });
 }
 
 function dataPath(kind, fileName) {
@@ -412,7 +463,7 @@ function activateQueueItem(index, { atEnd = false } = {}) {
   }
   if (item.type === 'toty') {
     store.audienceView = 'toty';
-    store.totyStep = atEnd ? TOTY_BEATS.length - 1 : 0;
+    store.totyStep = atEnd ? totyBeats().length - 1 : 0;
     return true;
   }
   if (item.type === 'lifemembers') {
@@ -499,9 +550,10 @@ function createMainWindow() {
   mainWindow.once('ready-to-show', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.show();
+    mainWindow.focus();
   });
   mainWindow.on('close', () => {
-    closeAudience();
+    closeAudience(true);
   });
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -551,10 +603,11 @@ function createAudienceWindow() {
   applyAudienceWindowSettings();
 }
 
-function closeAudience() {
+function closeAudience(force = false) {
   stopScoreboardLive();
   if (audienceWindow && !audienceWindow.isDestroyed()) {
-    audienceWindow.close();
+    if (force) audienceWindow.destroy();
+    else audienceWindow.close();
   }
   audienceWindow = null;
 }
@@ -634,6 +687,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-state', () => withWindowState(currentDecorated()));
   ipcMain.handle('get-audience-state', () => audienceFromState(currentDecorated()));
+
+  // Show the control window as soon as basic state APIs exist.
+  createMainWindow();
 
   ipcMain.handle('sync-season', async () => {
     if (store.sync.running) return decorateState(store, paths);
@@ -1011,9 +1067,11 @@ app.whenReady().then(() => {
         }
       }
     }
-    const picks = emptyTotyPicks();
+    const count = totyBenchCount();
+    const positions = totyPositions(count);
+    const picks = emptyTotyPicks(count);
     const chosen = shuffle(roster);
-    TOTY_POSITIONS.forEach((pos, index) => {
+    positions.forEach((pos, index) => {
       picks[pos.id] = chosen[index] ?? null;
     });
     if (!store.teamOfTheYear || typeof store.teamOfTheYear !== 'object') store.teamOfTheYear = {};
@@ -1092,6 +1150,29 @@ app.whenReady().then(() => {
   ipcMain.handle('copy-text', (_event, text) => {
     clipboard.writeText(String(text || ''));
     return true;
+  });
+
+  ipcMain.handle('save-text-file', async (_event, payload) => {
+    try {
+      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      const defaultName = String(payload?.defaultName || 'WFL-missing-photos.txt')
+        .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '-')
+        .trim() || 'WFL-missing-photos.txt';
+      const options = {
+        title: String(payload?.title || 'Save list'),
+        defaultPath: join(app.getPath('documents'), defaultName),
+        filters: [
+          { name: 'Text', extensions: ['txt'] },
+          { name: 'All files', extensions: ['*'] },
+        ],
+      };
+      const picked = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options);
+      if (picked.canceled || !picked.filePath) return { canceled: true };
+      writeFileSync(picked.filePath, String(payload?.content ?? ''), 'utf8');
+      return { file: picked.filePath };
+    } catch (error) {
+      return { error: error?.message || String(error) };
+    }
   });
 
   ipcMain.handle('scoreboard-set-round', (_event, roundId) => {
@@ -1182,6 +1263,94 @@ app.whenReady().then(() => {
     if (!picked.canceled && picked.filePaths?.length) {
       importCrowdFiles(picked.filePaths, { from: 'Desk', venue: '' });
     }
+    return emitState();
+  });
+
+  async function runPlayerPhotoImport(job) {
+    store.sync = {
+      ...(store.sync || {}),
+      running: true,
+      message: 'Cutting out imported photos…',
+      current: 0,
+      total: 0,
+    };
+    emitState();
+    try {
+      const result = await job((message, current, total) => {
+        store.sync = { ...(store.sync || {}), running: true, message, current, total };
+        emitState();
+      });
+      store.sync = { ...(store.sync || {}), running: false, message: '', current: 0, total: 0 };
+      if (!result?.ok) {
+        emitState();
+        return result;
+      }
+      bumpMediaRevision();
+      persist();
+      emitState();
+      return result;
+    } catch (error) {
+      store.sync = { ...(store.sync || {}), running: false, message: '', current: 0, total: 0 };
+      emitState();
+      return { error: error?.message || 'Import failed' };
+    }
+  }
+
+  ipcMain.handle('import-player-photos', async () => {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const options = {
+      title: 'Import player photos',
+      defaultPath: app.getPath('desktop'),
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] }],
+    };
+    const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    if (picked.canceled || !picked.filePaths?.length) return { canceled: true };
+    return runPlayerPhotoImport((onProgress) =>
+      importPlayerPhotoFiles(store, paths, picked.filePaths, onProgress)
+    );
+  });
+
+  ipcMain.handle('import-player-photo-folder', async () => {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const options = {
+      title: 'Import player photo folder',
+      defaultPath: join(app.getPath('desktop'), 'player photos'),
+      properties: ['openDirectory'],
+    };
+    const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    if (picked.canceled || !picked.filePaths?.[0]) return { canceled: true };
+    return runPlayerPhotoImport((onProgress) =>
+      importPlayerPhotosFromFolder(store, paths, picked.filePaths[0], onProgress)
+    );
+  });
+
+  ipcMain.handle('import-player-photo-for-player', async (_event, playerId) => {
+    const id = String(playerId || '');
+    if (!id) return { error: 'Choose a player.' };
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const options = {
+      title: 'Choose player photo',
+      defaultPath: app.getPath('desktop'),
+      properties: ['openFile'],
+      filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] }],
+    };
+    const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    if (picked.canceled || !picked.filePaths?.[0]) return { canceled: true };
+    return runPlayerPhotoImport(async () => importPlayerPhotoForPlayer(store, paths, id, picked.filePaths[0]));
+  });
+
+  ipcMain.handle('delete-imported-player-photo', (_event, playerId) => {
+    const result = deleteImportedPlayerPhoto(store, paths, playerId);
+    if (!result.ok) return result;
+    bumpMediaRevision();
+    persist();
+    emitState();
+    return result;
+  });
+
+  ipcMain.handle('refresh-audience-photos', () => {
+    bumpMediaRevision();
     return emitState();
   });
 
@@ -1386,13 +1555,14 @@ app.whenReady().then(() => {
     }
 
     if (store.audienceView === 'toty') {
+      const max = totyBeats().length - 1;
       const next = (store.totyStep ?? 0) + amount;
-      if (next > TOTY_BEATS.length - 1) {
-        if (!stepRunsheet(1)) store.totyStep = TOTY_BEATS.length - 1;
+      if (next > max) {
+        if (!stepRunsheet(1)) store.totyStep = max;
       } else if (next < 0) {
         if (!stepRunsheet(-1)) store.totyStep = 0;
       } else {
-        store.totyStep = clampTotyStep(next);
+        store.totyStep = clampTotyStep(next, totyBenchCount());
       }
       persistSoon();
       return emitState({ cheap: Boolean(decoratedCache) });
@@ -1472,17 +1642,24 @@ app.whenReady().then(() => {
       `);
       printWindow.showInactive();
       await new Promise((resolve) => setTimeout(resolve, 200));
+      const umpireCutSheets =
+        /\bumpire-slips-print\b/.test(html) || /\bumpire-envelopes-print\b/.test(html);
+      const umpirePay = /\bumpire-pay-print\b/.test(html);
       const pdf = await printWindow.webContents.printToPDF({
         printBackground: true,
         pageSize: 'A4',
         landscape: false,
-        margins: {
-          marginType: 'custom',
-          top: 0.2,
-          bottom: 0.2,
-          left: 0.2,
-          right: 0.2,
-        },
+        margins: umpireCutSheets
+          ? { marginType: 'custom', top: 0, bottom: 0, left: 0, right: 0 }
+          : umpirePay
+            ? { marginType: 'custom', top: 0.24, bottom: 0.24, left: 0.24, right: 0.24 }
+            : {
+                marginType: 'custom',
+                top: 0.2,
+                bottom: 0.2,
+                left: 0.2,
+                right: 0.2,
+              },
       });
       const header = Buffer.isBuffer(pdf) ? pdf.subarray(0, 5).toString('ascii') : '';
       if (!pdf?.length || !header.startsWith('%PDF')) {
@@ -1507,10 +1684,11 @@ app.whenReady().then(() => {
   ipcMain.handle('set-toty-player', (_event, gradeId, positionId, playerId) => {
     const id = totyStorageGradeId(gradeId);
     const pos = String(positionId || '');
-    if (!id || !TOTY_POSITION_IDS.has(pos)) return emitState();
-    if (!store.teamOfTheYear || typeof store.teamOfTheYear !== 'object') store.teamOfTheYear = {};
-    if (!store.teamOfTheYear[id] || typeof store.teamOfTheYear[id] !== 'object') store.teamOfTheYear[id] = {};
-    const picks = store.teamOfTheYear[id];
+    const count = totyBenchCount();
+    if (!id || !isTotyPositionId(pos, count)) return emitState();
+    const picks = ensureTotyGradePicks(id);
+    if (!picks) return emitState();
+    const previous = picks[pos] ? String(picks[pos]) : null;
     const pid = playerId ? String(playerId) : null;
     if (pid) {
       for (const [key, value] of Object.entries(picks)) {
@@ -1518,6 +1696,67 @@ app.whenReady().then(() => {
       }
     }
     picks[pos] = pid;
+    if (previous && previous !== pid) {
+      const leaders = ensureTotyCaptains(id);
+      if (leaders) delete leaders[previous];
+    }
+    pruneTotyCaptains(id);
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('set-toty-captain', (_event, gradeId, playerId, roleId) => {
+    const id = totyStorageGradeId(gradeId);
+    const pid = String(playerId || '');
+    if (!id || !pid) return emitState();
+    const picks = ensureTotyGradePicks(id);
+    if (!picks || !Object.values(picks).some((value) => String(value) === pid)) return emitState();
+    const leaders = ensureTotyCaptains(id);
+    if (!leaders) return emitState();
+    store.teamOfTheYearCaptains[id] = setTotyCaptainAssignment(leaders, pid, roleId);
+    pruneTotyCaptains(id);
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('add-toty-interchange', (_event, gradeId) => {
+    const id = totyStorageGradeId(gradeId);
+    const count = totyBenchCount();
+    if (!id || count >= TOTY_MAX_BENCH_COUNT) return emitState();
+    const nextCount = count + 1;
+    store.totyBenchCount = nextCount;
+    store.teamOfTheYear = normalizeToty(
+      Object.fromEntries(
+        Object.entries(store.teamOfTheYear ?? {}).map(([key, picks]) => [
+          key,
+          resizeTotyBenchPicks(picks, count, nextCount),
+        ])
+      ),
+      nextCount
+    );
+    ensureTotyGradePicks(id);
+    store.totyStep = clampTotyStep(store.totyStep, nextCount);
+    persist();
+    return emitState();
+  });
+
+  ipcMain.handle('remove-toty-interchange', (_event, gradeId, positionId) => {
+    const id = totyStorageGradeId(gradeId);
+    const count = totyBenchCount();
+    if (!id || count <= 0) return emitState();
+    const picks = ensureTotyGradePicks(id);
+    if (!picks) return emitState();
+    const removed = removeTotyBenchSlot(picks, positionId, count);
+    store.teamOfTheYear[id] = removed.picks;
+    const nextCount = removed.benchCount;
+    store.totyBenchCount = nextCount;
+    for (const [key, gradePicks] of Object.entries(store.teamOfTheYear)) {
+      if (key === id) continue;
+      store.teamOfTheYear[key] = resizeTotyBenchPicks(gradePicks, count, nextCount);
+    }
+    store.teamOfTheYear = normalizeToty(store.teamOfTheYear, nextCount);
+    pruneTotyCaptains(id);
+    store.totyStep = clampTotyStep(store.totyStep, nextCount);
     persist();
     return emitState();
   });
@@ -1673,6 +1912,170 @@ app.whenReady().then(() => {
     return emitState();
   });
 
+  function clubMatchKey(value) {
+    return canonicalClubKey(value) || String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, ' ');
+  }
+
+  function findGameForNightRow(row) {
+    const gameId = row?.gameId != null ? String(row.gameId) : '';
+    if (gameId) {
+      const byId = findGame(gameId);
+      if (byId) return byId;
+    }
+    const gradeId = row?.gradeId != null ? String(row.gradeId) : '';
+    const home = clubMatchKey(row?.home);
+    const away = clubMatchKey(row?.away);
+    for (const grade of store.grades ?? []) {
+      if (gradeId && String(grade.id) !== gradeId) continue;
+      for (const round of grade.rounds ?? []) {
+        if (row?.roundId != null && String(round.id) !== String(row.roundId)) continue;
+        for (const game of round.games ?? []) {
+          if (home && away) {
+            if (clubMatchKey(game.homeName) === home && clubMatchKey(game.awayName) === away) {
+              return { grade, round, game };
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function serializeManualPlayer(player) {
+    if (!player?.id) return null;
+    return {
+      id: String(player.id),
+      firstName: player.firstName ?? '',
+      lastName: player.lastName ?? '',
+      name: playerName(player),
+      number: player.number ? String(player.number) : '',
+      clubId: player.clubId ?? null,
+      clubName: player.clubName ?? '',
+      manual: true,
+      captainRole: player.captainRole ?? null,
+      position: player.position ?? null,
+      goals: Number(player.goals) || 0,
+      behinds: Number(player.behinds) || 0,
+      photoFile: player.photoFile ?? null,
+    };
+  }
+
+  function ensureManualPlayersOnGame(game, players) {
+    if (!game || !Array.isArray(players) || !players.length) return 0;
+    if (!Array.isArray(game.players)) game.players = [];
+    let added = 0;
+    for (const raw of players) {
+      const player = serializeManualPlayer(raw);
+      if (!player) continue;
+      const exists = game.players.some((item) => String(item.id) === player.id);
+      if (exists) continue;
+      const away = player.clubId != null && String(player.clubId) === String(game.awayId);
+      if (!player.clubId) {
+        player.clubId = away ? game.awayId : game.homeId;
+        player.clubName = away ? game.awayName : game.homeName;
+      }
+      game.players.push(player);
+      added += 1;
+    }
+    game.players.sort((a, b) => Number(a.number || 999) - Number(b.number || 999));
+    return added;
+  }
+
+  function applyNightSnapshot(snapshot) {
+    const votes = Array.isArray(snapshot?.votes) ? snapshot.votes : null;
+    let matched = 0;
+    let skipped = 0;
+    if (votes) {
+      for (const grade of store.grades ?? []) {
+        for (const round of grade.rounds ?? []) {
+          for (const game of round.games ?? []) {
+            game.votes = emptyVotes();
+          }
+        }
+      }
+      for (const row of votes) {
+        const found = findGameForNightRow(row);
+        if (!found || isForfeitGame(found.game)) {
+          skipped += 1;
+          continue;
+        }
+        ensureManualPlayersOnGame(found.game, row.manualPlayers);
+        const nextVotes = uniqueVotes(
+          {
+            ...emptyVotes(),
+            ...(row.votes && typeof row.votes === 'object' ? row.votes : {}),
+          },
+          voteScaleForGrade(found.grade)
+        );
+        // Recover orphaned manual vote IDs from older saves that did not store the player.
+        for (const [key, id] of Object.entries(nextVotes)) {
+          if (!id) continue;
+          const sid = String(id);
+          if (!sid.startsWith('manual-')) continue;
+          if ((found.game.players ?? []).some((player) => String(player.id) === sid)) continue;
+          ensureManualPlayersOnGame(found.game, [
+            {
+              id: sid,
+              firstName: 'Added',
+              lastName: 'player',
+              name: 'Added player',
+              clubId: found.game.homeId,
+              clubName: found.game.homeName,
+              manual: true,
+            },
+          ]);
+        }
+        found.game.votes = nextVotes;
+        matched += 1;
+      }
+    }
+
+    if (snapshot?.teamOfTheYear !== undefined) {
+      store.totyBenchCount = clampTotyBenchCount(
+        snapshot.totyBenchCount ?? store.totyBenchCount ?? TOTY_DEFAULT_BENCH_COUNT
+      );
+      store.teamOfTheYear = normalizeToty(snapshot.teamOfTheYear, store.totyBenchCount);
+      store.teamOfTheYearCaptains = normalizeTotyCaptains(
+        snapshot.teamOfTheYearCaptains ?? store.teamOfTheYearCaptains,
+        store.teamOfTheYear
+      );
+      store.totyStep = clampTotyStep(0, store.totyBenchCount);
+    } else if (snapshot?.teamOfTheYearCaptains !== undefined) {
+      store.teamOfTheYearCaptains = normalizeTotyCaptains(
+        snapshot.teamOfTheYearCaptains,
+        store.teamOfTheYear
+      );
+    }
+
+    if (snapshot?.nightExtras !== undefined) {
+      store.nightExtras = normalizeNightExtras(snapshot.nightExtras);
+    }
+
+    if (snapshot?.lifeMembers !== undefined) {
+      for (const member of normalizeLifeMembers(store.lifeMembers)) {
+        removeCustomLifeMemberPhoto(member.id);
+      }
+      const nextMembers = normalizeLifeMembers(snapshot.lifeMembers).map((member) => {
+        const photoFile = member.photoFile ? String(member.photoFile) : null;
+        if (photoFile && String(photoFile).startsWith(`lm-${member.id}.`)) {
+          return { ...member, photoFile: existsSync(join(paths.photos, photoFile)) ? photoFile : null };
+        }
+        return {
+          ...member,
+          photoFile: photoFile && existsSync(join(paths.photos, photoFile)) ? photoFile : null,
+        };
+      });
+      store.lifeMembers = nextMembers;
+      store.lifeMemberStep = clampLifeMemberStep(0, nextMembers.length);
+    }
+
+    persist();
+    return { matched, skipped, total: votes?.length ?? 0 };
+  }
+
   ipcMain.handle('save-night', async () => {
     try {
       const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
@@ -1689,6 +2092,10 @@ app.whenReady().then(() => {
       for (const grade of store.grades ?? []) {
         for (const round of grade.rounds ?? []) {
           for (const game of round.games ?? []) {
+            const manualPlayers = (game.players ?? [])
+              .filter((player) => player?.manual || String(player?.id || '').startsWith('manual-'))
+              .map(serializeManualPlayer)
+              .filter(Boolean);
             votes.push({
               gradeId: grade.id,
               roundId: round.id,
@@ -1696,6 +2103,7 @@ app.whenReady().then(() => {
               home: game.homeName ?? null,
               away: game.awayName ?? null,
               votes: game.votes ?? emptyVotes(),
+              manualPlayers,
             });
           }
         }
@@ -1704,6 +2112,8 @@ app.whenReady().then(() => {
         savedAt,
         votes,
         teamOfTheYear: store.teamOfTheYear ?? {},
+        teamOfTheYearCaptains: store.teamOfTheYearCaptains ?? {},
+        totyBenchCount: totyBenchCount(),
         nightExtras: normalizeNightExtras(store.nightExtras),
         lifeMembers: normalizeLifeMembers(store.lifeMembers),
       };
@@ -1711,6 +2121,38 @@ app.whenReady().then(() => {
       return { ok: true, savedAt, file: picked.filePath };
     } catch (error) {
       return { error: error?.message || 'Save failed' };
+    }
+  });
+
+  ipcMain.handle('import-night', async () => {
+    try {
+      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      const options = {
+        title: 'Import vote file',
+        defaultPath: join(app.getPath('documents'), 'WFL-medal-count.json'),
+        filters: [{ name: 'Medal count', extensions: ['json'] }],
+        properties: ['openFile'],
+      };
+      const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+      if (picked.canceled || !picked.filePaths?.[0]) return { canceled: true };
+      const file = picked.filePaths[0];
+      let snapshot;
+      try {
+        snapshot = JSON.parse(readFileSync(file, 'utf8'));
+      } catch {
+        return { error: 'That file is not a valid medal count save.' };
+      }
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+        return { error: 'That file is not a medal count save.' };
+      }
+      if (!Array.isArray(snapshot.votes) && snapshot.teamOfTheYear === undefined && snapshot.lifeMembers === undefined && snapshot.nightExtras === undefined) {
+        return { error: 'That file has no votes, team of the year, awards, or life members to import.' };
+      }
+      const result = applyNightSnapshot(snapshot);
+      emitState();
+      return { ok: true, file, ...result };
+    } catch (error) {
+      return { error: error?.message || 'Import failed' };
     }
   });
 
@@ -1723,6 +2165,8 @@ app.whenReady().then(() => {
       }
     }
     store.teamOfTheYear = {};
+    store.teamOfTheYearCaptains = {};
+    store.totyBenchCount = TOTY_DEFAULT_BENCH_COUNT;
     store.totyStep = 0;
     for (const member of normalizeLifeMembers(store.lifeMembers)) {
       removeCustomLifeMemberPhoto(member.id);
@@ -1737,7 +2181,11 @@ app.whenReady().then(() => {
     const id = totyStorageGradeId(gradeId);
     if (!id) return emitState();
     if (!store.teamOfTheYear || typeof store.teamOfTheYear !== 'object') store.teamOfTheYear = {};
-    store.teamOfTheYear[id] = {};
+    store.teamOfTheYear[id] = emptyTotyPicks(totyBenchCount());
+    if (!store.teamOfTheYearCaptains || typeof store.teamOfTheYearCaptains !== 'object') {
+      store.teamOfTheYearCaptains = {};
+    }
+    store.teamOfTheYearCaptains[id] = {};
     persist();
     return emitState();
   });
@@ -1754,6 +2202,17 @@ app.whenReady().then(() => {
       gradeLabels: incoming.gradeLabels
         ? { ...current.gradeLabels, ...incoming.gradeLabels }
         : current.gradeLabels,
+      umpirePayRates: incoming.umpirePayRates
+        ? {
+            ...current.umpirePayRates,
+            ...Object.fromEntries(
+              Object.entries(incoming.umpirePayRates).map(([bandId, rates]) => [
+                bandId,
+                { ...(current.umpirePayRates?.[bandId] ?? {}), ...(rates ?? {}) },
+              ])
+            ),
+          }
+        : current.umpirePayRates,
     });
     persist();
     applyAudienceWindowSettings();
@@ -1816,67 +2275,155 @@ app.whenReady().then(() => {
     return emitState();
   });
 
-  createMainWindow();
-  startObsServer({
-    distDir: join(__dirname, '../dist'),
-    mediaFile: dataPath,
-    getAudience: () => audienceFromState(currentDecorated()),
-    getSettings: () => currentSettings(),
-  })
-    .then((page) => {
-      obsPage = page;
-      emitState();
+  function repairOrphanManualVotes() {
+    let fixed = 0;
+    for (const grade of store.grades ?? []) {
+      for (const round of grade.rounds ?? []) {
+        for (const game of round.games ?? []) {
+          for (const id of Object.values(game.votes ?? {})) {
+            if (!id) continue;
+            const sid = String(id);
+            if (!sid.startsWith('manual-')) continue;
+            if ((game.players ?? []).some((player) => String(player.id) === sid)) continue;
+            ensureManualPlayersOnGame(game, [
+              {
+                id: sid,
+                firstName: 'Added',
+                lastName: 'player',
+                name: 'Added player',
+                clubId: game.homeId,
+                clubName: game.homeName,
+                manual: true,
+              },
+            ]);
+            fixed += 1;
+          }
+        }
+      }
+    }
+    return fixed;
+  }
+
+  if (repairOrphanManualVotes()) {
+    persist();
+    emitState();
+  }
+
+  // Background services after the window is already opening.
+  setImmediate(() => {
+    void (async () => {
+      try {
+        const needsCut = readdirSync(paths.photos).some((name) => {
+          if (!name.endsWith('.local')) return false;
+          const existing = findExistingPlayerPhoto(paths, name.slice(0, -'.local'.length));
+          return Boolean(existing && /\.(jpe?g|png)$/i.test(existing));
+        });
+        if (!needsCut) return;
+        store.sync = {
+          ...(store.sync || {}),
+          running: true,
+          message: 'Cutting out imported photos…',
+          current: 0,
+          total: 0,
+        };
+        emitState();
+        await recutLocalPlayerPhotos(store, paths, (message, current, total) => {
+          store.sync = { ...(store.sync || {}), running: true, message, current, total };
+          emitState();
+        });
+        bumpMediaRevision();
+        store.sync = { ...(store.sync || {}), running: false, message: '', current: 0, total: 0 };
+        persist();
+        emitState();
+      } catch {
+        store.sync = { ...(store.sync || {}), running: false, message: '', current: 0, total: 0 };
+        emitState();
+      }
+    })();
+    startObsServer({
+      distDir: join(__dirname, '../dist'),
+      mediaFile: dataPath,
+      getAudience: () => audienceFromState(currentDecorated()),
+      getSettings: () => currentSettings(),
     })
-    .catch(() => {
-      obsPage = null;
-    });
-  startCrowdServer({
-    getSettings: () => currentSettings(),
-    getVenues: () => crowdVenues(),
-    getLeagueName: () =>
-      normalizeCompetition(store?.competition) === 'wwfl'
-        ? "Whyalla Women's Football League"
-        : currentSettings().leagueName || 'Whyalla Football League',
-    getShortName: () => (normalizeCompetition(store?.competition) === 'wwfl' ? 'WWFL' : 'WFL'),
-    getLogoPath: () => join(paths.logos, 'wfl-logo.svg'),
-    getClubLogoPath: (file) => {
-      const name = String(file || '').replace(/[/\\]/g, '');
-      if (!name) return null;
-      const full = join(paths.logos, name);
-      return existsSync(full) ? full : null;
-    },
-    onSaved: () => emitState(),
-  })
-    .then((page) => {
-      crowdPage = page;
-      emitState();
-      void setupCrowdAnywhere(page.port);
+      .then((page) => {
+        obsPage = page;
+        emitState();
+      })
+      .catch(() => {
+        obsPage = null;
+      });
+    startCrowdServer({
+      getSettings: () => currentSettings(),
+      getVenues: () => crowdVenues(),
+      getLeagueName: () =>
+        normalizeCompetition(store?.competition) === 'wwfl'
+          ? "Whyalla Women's Football League"
+          : currentSettings().leagueName || 'Whyalla Football League',
+      getShortName: () => (normalizeCompetition(store?.competition) === 'wwfl' ? 'WWFL' : 'WFL'),
+      getLogoPath: () => join(paths.logos, 'wfl-logo.svg'),
+      getClubLogoPath: (file) => {
+        const name = String(file || '').replace(/[/\\]/g, '');
+        if (!name) return null;
+        const full = join(paths.logos, name);
+        return existsSync(full) ? full : null;
+      },
+      onSaved: () => emitState(),
     })
-    .catch(() => {
-      crowdPage = null;
-    });
-  ensureWebsiteClubLogos(paths)
-    .then(() => {
-      applyClubLogoFiles(store.clubs, paths);
-      persist();
-      emitState();
-    })
-    .catch(() => {});
-  if (currentSettings().refreshScoresOnLaunch) {
-    refreshFixtureScores(store, null, paths)
+      .then((page) => {
+        crowdPage = page;
+        emitState();
+        void setupCrowdAnywhere(page.port);
+      })
+      .catch(() => {
+        crowdPage = null;
+      });
+    ensureWebsiteClubLogos(paths)
       .then(() => {
+        applyClubLogoFiles(store.clubs, paths);
         persist();
         emitState();
       })
       .catch(() => {});
-  }
+    if (currentSettings().refreshScoresOnLaunch) {
+      refreshFixtureScores(store, null, paths)
+        .then(() => {
+          persist();
+          emitState();
+        })
+        .catch(() => {});
+    }
+  });
 });
 
+let isQuitting = false;
 app.on('before-quit', () => {
-  persist();
+  if (isQuitting) return;
+  isQuitting = true;
+  try {
+    persist();
+  } catch {
+    /* ignore save errors while quitting */
+  }
   stopFunnelRetry();
-  obsPage?.close?.();
-  crowdPage?.close?.();
+  try {
+    obsPage?.close?.();
+  } catch {
+    /* ignore */
+  }
+  try {
+    crowdPage?.close?.();
+  } catch {
+    /* ignore */
+  }
+  closeAudience(true);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.removeAllListeners('close');
+  }
+  // Don't hang forever if a background server stalls on close.
+  setTimeout(() => {
+    app.exit(0);
+  }, 1200).unref?.();
 });
 
 app.on('window-all-closed', () => {

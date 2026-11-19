@@ -23,8 +23,8 @@ import {
   looksLikeWomenClub,
   WORDPRESS_CLUB_LOGOS,
   WOMEN_CLUB_LOGO_OVERRIDES,
-  TOTY_POSITIONS,
-  TOTY_BEATS,
+  buildTotyBeats,
+  clampTotyBenchCount,
   clampTotyStep,
   clampLifeMemberStep,
   totyBeatAt,
@@ -33,6 +33,12 @@ import {
   normalizeLifeMembers,
   lifeMemberBeats,
   totyGradeFrom,
+  totyPositions,
+  totyCaptainRoleById,
+  normalizeTotyCaptains,
+  TOTY_CAPTAIN_ROLES,
+  TOTY_DEFAULT_BENCH_COUNT,
+  TOTY_MAX_BENCH_COUNT,
   collectGrandFinalFixtures,
   pickSponsorsForPage,
   isWflMemberClub,
@@ -48,6 +54,7 @@ import {
 } from './constants.js';
 import { mediaUrl } from './store.js';
 import { crowdViewFromSettings } from './crowdPhotos.js';
+import { listImportedPlayerPhotos, resolvePlayerPhoto } from './playerPhotos.js';
 import {
   displayRoundTitle,
   formatSpecialtyName,
@@ -169,39 +176,76 @@ function collectRoster(grades, clubs) {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
-function decorateRoster(rows) {
-  return (rows ?? []).map((row) => ({
-    ...row,
-    photoUrl: mediaUrl('photos', row.photoFile),
-    logoUrl: mediaUrl('logos', row.logoFile),
-  }));
+function decorateRoster(rows, paths) {
+  return (rows ?? []).map((row) => {
+    const photo = resolvePlayerPhoto(paths, row.id, row.photoFile);
+    return {
+      ...row,
+      photoFile: photo.photoFile,
+      photoImported: photo.photoImported,
+      photoUrl: mediaUrl('photos', photo.photoFile),
+      logoUrl: mediaUrl('logos', row.logoFile),
+    };
+  });
+}
+
+function totyBenchCountOf(store) {
+  return clampTotyBenchCount(store?.totyBenchCount ?? TOTY_DEFAULT_BENCH_COUNT);
 }
 
 function totyView(store, roster, grades) {
   const league = totyGradeFrom(grades ?? store.grades);
   const gradeId = league?.id ?? null;
-  const all = normalizeToty(store.teamOfTheYear);
-  const picks = (gradeId && all[gradeId]) || emptyTotyPicks();
+  const benchCount = totyBenchCountOf(store);
+  const positions = totyPositions(benchCount);
+  const beats = buildTotyBeats(benchCount);
+  const all = normalizeToty(store.teamOfTheYear, benchCount);
+  const picks = (gradeId && all[gradeId]) || emptyTotyPicks(benchCount);
+  const captainsByGrade = normalizeTotyCaptains(store.teamOfTheYearCaptains, all);
+  const captains = (gradeId && captainsByGrade[gradeId]) || {};
   const leagueRoster = gradeId
     ? (roster ?? []).filter((player) => (player.gradeIds ?? []).includes(gradeId))
     : roster ?? [];
   const byId = new Map((roster ?? []).map((player) => [player.id, player]));
+  const withCaptain = (player) => {
+    if (!player) return null;
+    const role = totyCaptainRoleById(captains[player.id]);
+    return role
+      ? {
+          ...player,
+          totyCaptain: { id: role.id, label: role.label, short: role.short },
+        }
+      : { ...player, totyCaptain: null };
+  };
   const sponsor =
     (store.sponsors ?? []).find((item) => String(item.id) === String(store.totySponsorId || '')) ?? null;
-  const step = clampTotyStep(store.totyStep);
-  const beat = totyBeatAt(step);
+  const step = clampTotyStep(store.totyStep, benchCount);
+  const beat = totyBeatAt(step, benchCount);
+  const resolvedPicks = Object.fromEntries(
+    positions.map((pos) => [pos.id, withCaptain(byId.get(picks[pos.id]) ?? null)])
+  );
   return {
     gradeId,
     gradeName: league?.name || 'League',
     roster: leagueRoster,
-    picks: Object.fromEntries(TOTY_POSITIONS.map((pos) => [pos.id, byId.get(picks[pos.id]) ?? null])),
-    filled: TOTY_POSITIONS.filter((pos) => picks[pos.id]).length,
-    total: TOTY_POSITIONS.length,
+    benchCount,
+    maxBenchCount: TOTY_MAX_BENCH_COUNT,
+    captainRoles: TOTY_CAPTAIN_ROLES.map((role) => ({
+      id: role.id,
+      label: role.label,
+      short: role.short,
+      unique: role.unique,
+    })),
+    captains,
+    picks: resolvedPicks,
+    filled: positions.filter((pos) => picks[pos.id]).length,
+    total: positions.length,
     step,
-    totalSteps: TOTY_BEATS.length,
+    totalSteps: beats.length,
     beat: beat
       ? {
           type: beat.type,
+          lineId: beat.lineId ?? null,
           lineLabel: beat.lineLabel,
           short: beat.short ?? null,
           reveal: beat.reveal ?? 0,
@@ -620,8 +664,9 @@ export function applyPresentationCursor(full, store) {
   const audienceView = normalizeAudienceView(store.audienceView);
   const queue = normalizePresentationQueue(store.presentation?.queue);
   const queueItem = queue[store.presentation?.queueIndex ?? 0];
-  const totyStep = clampTotyStep(store.totyStep);
-  const totyBeat = totyBeatAt(totyStep);
+  const totyBenchCount = totyBenchCountOf(store);
+  const totyStep = clampTotyStep(store.totyStep, totyBenchCount);
+  const totyBeat = totyBeatAt(totyStep, totyBenchCount);
   const members = full.lifeMembers?.members ?? [];
   const lifeStep = clampLifeMemberStep(store.lifeMemberStep, members.length);
   const lifeBeats = lifeMemberBeats(members.length);
@@ -654,6 +699,7 @@ export function applyPresentationCursor(full, store) {
           beat: totyBeat
             ? {
                 type: totyBeat.type,
+                lineId: totyBeat.lineId ?? null,
                 lineLabel: totyBeat.lineLabel,
                 short: totyBeat.short ?? null,
                 reveal: totyBeat.reveal ?? 0,
@@ -745,14 +791,14 @@ function clubsForGrade(clubs, grade) {
   });
 }
 
-function gradeBoardsView(store, clubs, settings, currentSlide, grades) {
+function gradeBoardsView(store, clubs, settings, currentSlide, grades, paths) {
   const all = sortGrades(grades ?? []).map((grade) => {
     const gradeClubs = clubsForGrade(clubs, grade);
     return {
       id: grade.id,
       name: overlayGradeName(grade, settings),
       medalTitle: overlayMedalTitle(grade, settings),
-      board: boardView(tallyGrade(grade, gradeClubs, null, settings)),
+      board: boardView(tallyGrade(grade, gradeClubs, null, settings), paths),
     };
   });
   if (store.scoreboard?.leaderboardScope === 'grade') {
@@ -770,14 +816,14 @@ function gradeBoardsView(store, clubs, settings, currentSlide, grades) {
     const target = one.length ? one : all.slice(0, 1);
     return target.map((item) =>
       !currentSlide || String(currentSlide.gradeId) === String(item.id)
-        ? { ...item, board: revealedBoardFromSlide(currentSlide) }
+        ? { ...item, board: boardView(revealedBoardFromSlide(currentSlide), paths) }
         : { ...item, board: [] }
     );
   }
   return all;
 }
 
-function scoreboardView(store, clubs, settings, sponsors, currentSlide, grades, boardGrades) {
+function scoreboardView(store, clubs, settings, sponsors, currentSlide, grades, boardGrades, paths) {
   const list = grades ?? [];
   const gradeId = store.scoreboard?.gradeId || store.activeGradeId;
   const grade = list.find((item) => item.id === gradeId) ?? list[0] ?? null;
@@ -794,29 +840,37 @@ function scoreboardView(store, clubs, settings, sponsors, currentSlide, grades, 
     season: grade.season || store.season,
     topN,
     liveTopN,
-    top8: boardView(tally.slice(0, liveTopN)),
-    board: boardView(tally),
-    grades: gradeBoardsView(store, clubs, settings, currentSlide, boardGrades ?? list),
+    top8: boardView(tally.slice(0, liveTopN), paths),
+    board: boardView(tally, paths),
+    grades: gradeBoardsView(store, clubs, settings, currentSlide, boardGrades ?? list, paths),
     sponsors: pickSponsorsForPage(sponsors, `scoreboard:${page}`),
     leaderboardSponsors: pickSponsorsForPage(sponsors, `leaderboard:${page}`),
   };
 }
 
-function playerView(player) {
+function playerView(player, paths) {
+  const photo = resolvePlayerPhoto(paths, player.id, player.photoFile);
   return {
     ...player,
     name: playerName(player),
-    photoUrl: mediaUrl('photos', player.photoFile),
+    photoFile: photo.photoFile,
+    photoImported: photo.photoImported,
+    photoUrl: mediaUrl('photos', photo.photoFile),
   };
 }
 
-function boardView(rows) {
-  return (rows ?? []).map((row) => ({
-    ...row,
-    clubName: presentClubName(row.clubName),
-    photoUrl: mediaUrl('photos', row.photoFile),
-    logoUrl: mediaUrl('logos', row.logoFile),
-  }));
+function boardView(rows, paths) {
+  return (rows ?? []).map((row) => {
+    const photo = resolvePlayerPhoto(paths, row.id, row.photoFile);
+    return {
+      ...row,
+      clubName: presentClubName(row.clubName),
+      photoFile: photo.photoFile,
+      photoImported: photo.photoImported,
+      photoUrl: mediaUrl('photos', photo.photoFile),
+      logoUrl: mediaUrl('logos', row.logoFile),
+    };
+  });
 }
 
 function roundNumbersFromSlides(slides) {
@@ -851,70 +905,94 @@ function forceWomenVoteScale(slide, competition) {
   };
 }
 
-function decorateSlides(rawSlides, sponsors, competition) {
-  return (rawSlides ?? []).map((slide) => ({
-    ...forceWomenVoteScale(slide, competition),
-    sponsors: pickSponsorsForPage(
-      sponsors,
-      [slide.gradeId, slide.roundId || slide.roundName || slide.type].join(':')
-    ),
-    photoUrl: mediaUrl('photos', slide.photoFile || slide.winner?.photoFile),
-    logoUrl: mediaUrl('logos', slide.logoFile || slide.winner?.logoFile),
-    homeLogoUrl: mediaUrl('logos', slide.homeLogoFile),
-    awayLogoUrl: mediaUrl('logos', slide.awayLogoFile),
-    specialtyPinUrl: mediaUrl('specialty', slide.specialtyPinFile),
-    specialtyColors: slide.specialtyColors || null,
-    imageUrl: mediaUrl('sponsors', slide.imageFile),
-    winner: slide.winner
-      ? {
-          ...slide.winner,
-          clubName: presentClubName(slide.winner.clubName),
-          homeClubName: presentClubName(slide.winner.homeClubName),
-          photoUrl: mediaUrl('photos', slide.winner.photoFile),
-          logoUrl: mediaUrl('logos', slide.winner.logoFile),
-        }
-      : null,
-    runnerUp: slide.runnerUp
-      ? {
-          ...slide.runnerUp,
-          clubName: presentClubName(slide.runnerUp.clubName),
-          photoUrl: mediaUrl('photos', slide.runnerUp.photoFile),
-          logoUrl: mediaUrl('logos', slide.runnerUp.logoFile),
-        }
-      : null,
-    homeName: presentClubName(slide.homeName),
-    awayName: presentClubName(slide.awayName),
-    clubName: presentClubName(slide.clubName),
-    ...(slide.forfeit || slide.forfeitLine
-      ? forfeitDetails({
-          ...slide,
-          homeName: presentClubName(slide.homeName),
-          awayName: presentClubName(slide.awayName),
-        })
-      : {}),
-    board: boardView(slide.board),
-    games: (slide.games ?? []).map((game) => {
-      const named = {
-        ...game,
-        homeName: presentClubName(game.homeName),
-        awayName: presentClubName(game.awayName),
-      };
-      return {
-        ...named,
-        ...forfeitDetails(named),
-        ...scoreFields(named),
-        homeLogoUrl: mediaUrl('logos', game.homeLogoFile),
-        awayLogoUrl: mediaUrl('logos', game.awayLogoFile),
-      };
-    }),
-    picks: (slide.picks ?? []).map((pick) => ({
-      ...pick,
-      clubName: presentClubName(pick.clubName),
-      clubLabel: presentClubName(pick.clubLabel || pick.clubName),
-      photoUrl: mediaUrl('photos', pick.photoFile),
-      logoUrl: mediaUrl('logos', pick.logoFile),
-    })),
-  }));
+function decorateSlides(rawSlides, sponsors, competition, paths) {
+  return (rawSlides ?? []).map((slide) => {
+    const mainPhoto = resolvePlayerPhoto(
+      paths,
+      slide.winner?.id || slide.playerId,
+      slide.photoFile || slide.winner?.photoFile
+    );
+    const winnerPhoto = slide.winner
+      ? resolvePlayerPhoto(paths, slide.winner.id, slide.winner.photoFile)
+      : null;
+    const runnerPhoto = slide.runnerUp
+      ? resolvePlayerPhoto(paths, slide.runnerUp.id, slide.runnerUp.photoFile)
+      : null;
+    return {
+      ...forceWomenVoteScale(slide, competition),
+      sponsors: pickSponsorsForPage(
+        sponsors,
+        [slide.gradeId, slide.roundId || slide.roundName || slide.type].join(':')
+      ),
+      photoFile: mainPhoto.photoFile,
+      photoImported: mainPhoto.photoImported,
+      photoUrl: mediaUrl('photos', mainPhoto.photoFile),
+      logoUrl: mediaUrl('logos', slide.logoFile || slide.winner?.logoFile),
+      homeLogoUrl: mediaUrl('logos', slide.homeLogoFile),
+      awayLogoUrl: mediaUrl('logos', slide.awayLogoFile),
+      specialtyPinUrl: mediaUrl('specialty', slide.specialtyPinFile),
+      specialtyColors: slide.specialtyColors || null,
+      imageUrl: mediaUrl('sponsors', slide.imageFile),
+      winner: slide.winner
+        ? {
+            ...slide.winner,
+            clubName: presentClubName(slide.winner.clubName),
+            homeClubName: presentClubName(slide.winner.homeClubName),
+            photoFile: winnerPhoto.photoFile,
+            photoImported: winnerPhoto.photoImported,
+            photoUrl: mediaUrl('photos', winnerPhoto.photoFile),
+            logoUrl: mediaUrl('logos', slide.winner.logoFile),
+          }
+        : null,
+      runnerUp: slide.runnerUp
+        ? {
+            ...slide.runnerUp,
+            clubName: presentClubName(slide.runnerUp.clubName),
+            photoFile: runnerPhoto.photoFile,
+            photoImported: runnerPhoto.photoImported,
+            photoUrl: mediaUrl('photos', runnerPhoto.photoFile),
+            logoUrl: mediaUrl('logos', slide.runnerUp.logoFile),
+          }
+        : null,
+      homeName: presentClubName(slide.homeName),
+      awayName: presentClubName(slide.awayName),
+      clubName: presentClubName(slide.clubName),
+      ...(slide.forfeit || slide.forfeitLine
+        ? forfeitDetails({
+            ...slide,
+            homeName: presentClubName(slide.homeName),
+            awayName: presentClubName(slide.awayName),
+          })
+        : {}),
+      board: boardView(slide.board, paths),
+      games: (slide.games ?? []).map((game) => {
+        const named = {
+          ...game,
+          homeName: presentClubName(game.homeName),
+          awayName: presentClubName(game.awayName),
+        };
+        return {
+          ...named,
+          ...forfeitDetails(named),
+          ...scoreFields(named),
+          homeLogoUrl: mediaUrl('logos', game.homeLogoFile),
+          awayLogoUrl: mediaUrl('logos', game.awayLogoFile),
+        };
+      }),
+      picks: (slide.picks ?? []).map((pick) => {
+        const photo = resolvePlayerPhoto(paths, pick.id || pick.playerId, pick.photoFile);
+        return {
+          ...pick,
+          clubName: presentClubName(pick.clubName),
+          clubLabel: presentClubName(pick.clubLabel || pick.clubName),
+          photoFile: photo.photoFile,
+          photoImported: photo.photoImported,
+          photoUrl: mediaUrl('photos', photo.photoFile),
+          logoUrl: mediaUrl('logos', pick.logoFile),
+        };
+      }),
+    };
+  });
 }
 
 export function decorateState(store, paths) {
@@ -937,12 +1015,17 @@ export function decorateState(store, paths) {
       name: overlayGradeName(grade, settings),
       medalTitle: overlayMedalTitle(grade, settings),
       progress: gradeProgress(grade, settings),
-      leaderboard: tallyGrade(grade, gradeClubs, null, settings).map((row) => ({
-        ...row,
-        clubName: presentClubName(row.clubName),
-        photoUrl: mediaUrl('photos', row.photoFile),
-        logoUrl: mediaUrl('logos', row.logoFile),
-      })),
+      leaderboard: tallyGrade(grade, gradeClubs, null, settings).map((row) => {
+        const photo = resolvePlayerPhoto(paths, row.id, row.photoFile);
+        return {
+          ...row,
+          clubName: presentClubName(row.clubName),
+          photoFile: photo.photoFile,
+          photoImported: photo.photoImported,
+          photoUrl: mediaUrl('photos', photo.photoFile),
+          logoUrl: mediaUrl('logos', row.logoFile),
+        };
+      }),
       rounds: (grade.rounds ?? []).filter((round) => includeRound(round, settings)).map((round) => {
         const specialtyName = formatSpecialtyName(roundSpecialtyName(round));
         const specialty = specialtyPresentation(settings, specialtyName, round.specialtyPinFile);
@@ -971,7 +1054,7 @@ export function decorateState(store, paths) {
               homeLogoUrl: mediaUrl('logos', gradeClubs.find((club) => club.id === game.homeId)?.logoFile),
               awayLogoUrl: mediaUrl('logos', gradeClubs.find((club) => club.id === game.awayId)?.logoFile),
               players: (game.players ?? []).map((player) => ({
-                ...playerView(player),
+                ...playerView(player, paths),
                 clubName: presentClubName(player.clubName),
                 clubLabel: presentClubName(clubLabelForVote(grade, player.id, player.clubName)),
               })),
@@ -1000,7 +1083,8 @@ export function decorateState(store, paths) {
         competition: store.competition,
       }),
       sponsors,
-      store.competition
+      store.competition,
+      paths
     ),
   });
   const allDecks = allGrades.map(deckFor);
@@ -1023,7 +1107,8 @@ export function decorateState(store, paths) {
         competition: store.competition,
       }),
       sponsors,
-      store.competition
+      store.competition,
+      paths
     );
   };
   const slides = slidesFromStartRound(presoSlidesFor(presentationGrade?.id), starts[presentationGrade?.id]);
@@ -1037,8 +1122,14 @@ export function decorateState(store, paths) {
         return source ? { ...source, id: grade.id, name: grade.name } : grade;
       }),
       clubs
-    )
+    ),
+    paths
   );
+  const importedPhotos = listImportedPlayerPhotos(store, paths).map((row) => ({
+    ...row,
+    photoUrl: mediaUrl('photos', row.photoFile),
+  }));
+  const importedPhotoCount = importedPhotos.length;
 
   return {
     season: store.season,
@@ -1078,8 +1169,10 @@ export function decorateState(store, paths) {
       decks: decks.map(summarizeDeck),
       allDecks: allDecks.map(summarizeDeck),
     },
-    scoreboard: scoreboardView(store, clubs, settings, sponsors, currentSlide, grades),
+    scoreboard: scoreboardView(store, clubs, settings, sponsors, currentSlide, grades, null, paths),
     roster,
+    importedPhotoCount,
+    importedPhotos,
     toty: totyView(store, roster, grades),
     lifeMembers: lifeMembersView(store, roster, clubs),
     splash: splashView(store, grades, clubs, settings, paths.logos),
@@ -1131,6 +1224,7 @@ export function audienceFromState(full) {
         filled: full.toty?.filled,
         total: full.toty?.total,
         picks: full.toty?.picks,
+        benchCount: full.toty?.benchCount,
         step: full.toty?.step ?? 0,
         totalSteps: full.toty?.totalSteps ?? 0,
         beat: full.toty?.beat ?? null,

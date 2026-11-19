@@ -1,5 +1,11 @@
 import { useLayoutEffect, useRef } from 'react';
-import { TOTY_REVEAL_LINES, totyRevealedIds } from '../../electron/constants.js';
+import {
+  TOTY_DEFAULT_BENCH_COUNT,
+  TOTY_MAX_BENCH_COUNT,
+  totyBenchPositions,
+  totyRevealLines,
+  totyRevealedIds,
+} from '../../electron/constants.js';
 import './toty-pitch.css';
 
 const BOX_STRETCH = 1.1;
@@ -101,12 +107,7 @@ export const TOTY_FOLLOWER_SPOTS = [
   { id: 'rov', label: 'ROV', name: 'Rover' },
 ];
 
-export const TOTY_BENCH_SPOTS = [
-  { id: 'int-1', label: 'INT', name: 'Interchange 1' },
-  { id: 'int-2', label: 'INT', name: 'Interchange 2' },
-  { id: 'int-3', label: 'INT', name: 'Interchange 3' },
-  { id: 'int-4', label: 'INT', name: 'Interchange 4' },
-];
+export const TOTY_BENCH_SPOTS = totyBenchPositions(TOTY_DEFAULT_BENCH_COUNT);
 
 function lerp(a, b, t) {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
@@ -201,6 +202,7 @@ function PlayerCard({ player, pos, showRole }) {
   const { first, last } = nameParts(player);
   const photo = player?.photoUrl;
   const logo = player?.logoUrl;
+  const captain = player?.totyCaptain;
   return (
     <>
       <span className="toty-frame">
@@ -212,6 +214,11 @@ function PlayerCard({ player, pos, showRole }) {
         <span className="toty-tab">
           {logo ? <img src={logo} alt="" /> : <b>W</b>}
         </span>
+        {captain ? (
+          <span className={`toty-captain-badge role-${captain.id}`} title={captain.label}>
+            {captain.short}
+          </span>
+        ) : null}
       </span>
       <span className="toty-names">
         {showRole ? <em>{pos.name}</em> : null}
@@ -226,7 +233,10 @@ function PlayerCard({ player, pos, showRole }) {
                 </>
               ) : null}
             </strong>
-            <small>{player.clubName}</small>
+            <small>
+              {player.clubName}
+              {captain ? ` · ${captain.label}` : ''}
+            </small>
           </>
         ) : (
           <strong>{showRole ? pos.name : pos.label}</strong>
@@ -254,27 +264,55 @@ function FieldSpot({ pos, player, onPick, justIn }) {
   );
 }
 
-function SideSlot({ pos, player, onPick, justIn }) {
+function SideSlot({ pos, player, onPick, onRemove, justIn }) {
   const className = `toty-side-slot${player ? ' filled' : ''}${justIn ? ' just-in' : ''}`;
   const body = <PlayerCard player={player} pos={pos} showRole />;
+  const removeBtn = onRemove ? (
+    <button
+      type="button"
+      className="toty-slot-remove"
+      title={`Remove ${pos.name}`}
+      aria-label={`Remove ${pos.name}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onRemove(pos);
+      }}
+    >
+      ×
+    </button>
+  ) : null;
   if (onPick) {
     return (
-      <button type="button" className={className} onClick={() => onPick(pos)} title={pos.name}>
-        {body}
-      </button>
+      <div className="toty-side-slot-wrap">
+        <button type="button" className={className} onClick={() => onPick(pos)} title={pos.name}>
+          {body}
+        </button>
+        {removeBtn}
+      </div>
     );
   }
   return <div className={className}>{body}</div>;
 }
 
-export function TotyPitch({ picks = {}, onPick, children, revealStep }) {
+export function TotyPitch({
+  picks = {},
+  onPick,
+  children,
+  revealStep,
+  benchCount = TOTY_DEFAULT_BENCH_COUNT,
+  onAddBench,
+  onRemoveBench,
+}) {
   const pitchRef = useRef(null);
   const presenting = Number.isFinite(revealStep);
-  const revealed = presenting ? new Set(totyRevealedIds(revealStep)) : null;
+  const benchSpots = totyBenchPositions(benchCount);
+  const revealLines = totyRevealLines(benchCount);
+  const revealed = presenting ? new Set(totyRevealedIds(revealStep, benchCount)) : null;
   const currentSpots =
-    presenting && revealStep > 0 ? new Set(TOTY_REVEAL_LINES[revealStep - 1]?.spots ?? []) : null;
+    presenting && revealStep > 0 ? new Set(revealLines[revealStep - 1]?.spots ?? []) : null;
   const showSpot = (id) => !revealed || revealed.has(id);
   const showSection = (spots) => !revealed || spots.some((pos) => revealed.has(pos.id));
+  const canEditBench = Boolean(onPick && (onAddBench || onRemoveBench));
 
   useLayoutEffect(() => {
     const root = pitchRef.current;
@@ -308,11 +346,25 @@ export function TotyPitch({ picks = {}, onPick, children, revealStep }) {
       ro.disconnect();
       root.removeEventListener('load', onLoad, true);
     };
-  }, [picks, revealStep]);
+  }, [picks, revealStep, benchCount]);
 
   return (
     <div className="toty-pitch" ref={pitchRef}>
       <div className="afl-field-wrap">
+        {showSection(TOTY_FOLLOWER_SPOTS) ? (
+          <section className="toty-followers-tl">
+            <h3>Ruck & rovers</h3>
+            {TOTY_FOLLOWER_SPOTS.filter((pos) => showSpot(pos.id)).map((pos) => (
+              <SideSlot
+                key={pos.id}
+                pos={pos}
+                player={picks[pos.id]}
+                onPick={onPick}
+                justIn={Boolean(currentSpots?.has(pos.id))}
+              />
+            ))}
+          </section>
+        ) : null}
         <div className="afl-field">
           <FieldMarkings />
           {TOTY_FIELD_SPOTS.filter((pos) => showSpot(pos.id)).map((pos) => (
@@ -327,32 +379,29 @@ export function TotyPitch({ picks = {}, onPick, children, revealStep }) {
         </div>
       </div>
       <aside className="toty-side">
-        {showSection(TOTY_FOLLOWER_SPOTS) ? (
-          <section>
-            <h3>Ruck & rovers</h3>
-            {TOTY_FOLLOWER_SPOTS.filter((pos) => showSpot(pos.id)).map((pos) => (
+        {showSection(benchSpots) || (canEditBench && !presenting) ? (
+          <section className="toty-bench">
+            <div className="toty-bench-head">
+              <h3>Interchange</h3>
+              {canEditBench && onAddBench && benchSpots.length < TOTY_MAX_BENCH_COUNT ? (
+                <button type="button" className="toty-bench-add" onClick={onAddBench}>
+                  Add
+                </button>
+              ) : null}
+            </div>
+            {benchSpots.filter((pos) => showSpot(pos.id)).map((pos) => (
               <SideSlot
                 key={pos.id}
                 pos={pos}
                 player={picks[pos.id]}
                 onPick={onPick}
+                onRemove={canEditBench && onRemoveBench ? onRemoveBench : null}
                 justIn={Boolean(currentSpots?.has(pos.id))}
               />
             ))}
-          </section>
-        ) : null}
-        {showSection(TOTY_BENCH_SPOTS) ? (
-          <section>
-            <h3>Interchange</h3>
-            {TOTY_BENCH_SPOTS.filter((pos) => showSpot(pos.id)).map((pos) => (
-              <SideSlot
-                key={pos.id}
-                pos={pos}
-                player={picks[pos.id]}
-                onPick={onPick}
-                justIn={Boolean(currentSpots?.has(pos.id))}
-              />
-            ))}
+            {canEditBench && !benchSpots.length ? (
+              <p className="toty-bench-empty">No interchange spots yet.</p>
+            ) : null}
           </section>
         ) : null}
         {children}

@@ -389,6 +389,12 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
   margin: 0 0 -4px;
   filter: drop-shadow(0 10px 14px rgba(0, 0, 0, 0.35));
 }
+/* PC imports are often full-body; shrink so head tops sit with MatchDay cutouts above the name plate. */
+.player-cutout.is-imported {
+  width: 78%;
+  max-height: 78%;
+  margin-bottom: -2px;
+}
 .player-cutout.placeholder {
   display: block;
   flex: 0 0 auto;
@@ -711,8 +717,92 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 .toty-line-row {
   flex: 1;
 }
-.toty-line-row.cols-4 {
-  grid-template-columns: 1fr 1fr 1fr 1fr;
+.toty-line-row.cols-1 { grid-template-columns: minmax(0, 1fr); }
+.toty-line-row.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.toty-line-row.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.toty-line-row.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.toty-line-row.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.toty-line-row.cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.toty-line-row.cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.toty-line-row.cols-8 { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.stage.toty-bench-stage {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+/* 5–8 interchange: two rows, up to 4 wide; incomplete bottom row stays centered. */
+.votes-row.toty-line-row.toty-bench-announce {
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: center !important;
+  align-content: center !important;
+  align-items: stretch;
+  gap: 16px 18px;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 auto !important;
+  padding: 6px 0 0;
+  min-height: 0;
+}
+.toty-bench-stage .toty-sponsor-mark.compact {
+  margin-top: 6px;
+  flex: 0 0 auto;
+}
+.votes-row.toty-line-row.toty-bench-announce .vote-col {
+  flex: 1 1 calc((100% - 54px) / 4);
+  width: calc((100% - 54px) / 4);
+  max-width: calc((100% - 54px) / 4);
+  min-width: 0;
+  min-height: 0;
+  height: calc((100% - 16px) / 2);
+}
+.toty-line-row.toty-bench-announce .vote-slot {
+  border-radius: 22px;
+}
+.toty-line-row.toty-bench-announce .vote-slot b {
+  font-size: clamp(40px, 6vw, 84px);
+}
+.toty-line-row.toty-bench-announce .vote-card {
+  min-height: 0;
+  height: 100%;
+  padding: 52px 10px 12px;
+  border-radius: 22px;
+  justify-content: flex-end;
+}
+.toty-line-row.toty-bench-announce .vote-count {
+  top: 10px;
+  padding: 6px 16px;
+  font-size: clamp(15px, 1.5vw, 22px);
+}
+.toty-line-row.toty-bench-announce .player-stack {
+  width: 96%;
+  padding-bottom: 0;
+  justify-content: flex-end;
+  gap: 0;
+}
+.toty-line-row.toty-bench-announce .player-photo {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+.toty-line-row.toty-bench-announce .player-cutout {
+  max-height: none;
+  height: 100%;
+}
+.toty-line-row.toty-bench-announce .player-cutout.is-imported {
+  width: 82%;
+  max-height: 88%;
+}
+.toty-line-row.toty-bench-announce .player-id {
+  flex: 0 0 auto;
+  padding: 10px 12px 12px;
+  border-width: 3px;
+}
+.toty-line-row.toty-bench-announce .player-id strong {
+  font-size: clamp(22px, 2.6vw, 40px);
+  line-height: 1.05;
+}
+.toty-line-row.toty-bench-announce .player-id small {
+  margin-top: 4px;
+  font-size: clamp(13px, 1.3vw, 20px);
 }
 .toty-line-row .just-in .vote-card {
   animation: riseIn 0.18s ease-out;
@@ -770,6 +860,43 @@ html, body, #root { margin: 0; height: 100%; background: #07090d; color: #fff; }
 .toty-show .toty-tab b {
   width: 17px;
   height: 17px;
+}
+.toty-show .toty-captain-badge {
+  min-width: 28px;
+  height: 22px;
+  font-size: 12px;
+  top: -8px;
+  right: -8px;
+}
+.toty-show .toty-followers-tl {
+  top: 16px;
+  left: 16px;
+  width: min(380px, 34%);
+  gap: 8px;
+}
+.toty-show .toty-followers-tl h3 {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.toty-show .toty-followers-tl .toty-side-slot {
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 12px 12px 8px;
+}
+.toty-show .toty-followers-tl .toty-side-slot .toty-frame {
+  width: 80px;
+  height: 96px;
+}
+.toty-show .toty-followers-tl .toty-names em {
+  font-size: 11px;
+}
+.toty-show .toty-followers-tl .toty-names strong {
+  font-size: clamp(18px, 1.8vw, 28px);
+  white-space: normal;
+}
+.toty-show .toty-followers-tl .toty-names small {
+  font-size: 14px;
+  white-space: normal;
 }
 .toty-show .toty-side {
   gap: 8px;

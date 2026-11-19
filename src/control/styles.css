@@ -488,6 +488,35 @@ button.active { outline: 2px solid var(--blue); }
 }
 .modal h3 { margin: 0 0 6px; }
 .modal .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.missing-photos-modal { width: min(520px, 100%); }
+.missing-photos-list {
+  list-style: none;
+  margin: 10px 0 4px;
+  padding: 0;
+  max-height: min(420px, 52vh);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.missing-photos-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.missing-photos-list li:last-child { border-bottom: 0; }
+.missing-photos-list strong { font-size: 14px; }
+.missing-photos-list small { color: var(--muted); font-size: 12px; }
+.missing-photos-empty {
+  margin: 12px 0 4px;
+  color: var(--muted);
+}
+.missing-photos-saved {
+  margin: 0 0 4px;
+  word-break: break-all;
+}
 .picker {
   list-style: none;
   padding: 0;
@@ -620,6 +649,7 @@ body.is-resizing-votes {
   display: grid;
   gap: 12px;
   margin-top: 10px;
+  grid-template-columns: 1fr;
 }
 .specialty-asset-card {
   display: grid;
@@ -634,6 +664,9 @@ body.is-resizing-votes {
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
+}
+.settings .specialty-assets {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 .specialty-asset-preview {
   position: relative;
@@ -932,8 +965,25 @@ h2 { margin: 0 0 6px; }
   padding: 8px 10px;
 }
 
-.teams { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-.teams header { display: flex; gap: 10px; align-items: center; }
+.teams { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.teams > section {
+  min-width: 0;
+}
+.teams header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0 -4px 6px;
+  padding: 10px 4px 12px;
+  background: var(--bg);
+  box-shadow: 0 1px 0 var(--line);
+}
+.teams header h3 {
+  margin: 0;
+}
 .teams header img, .logo-sm { width: 36px; height: 36px; object-fit: contain; }
 .teams ul { list-style: none; padding: 0; margin: 0; }
 .teams li button {
@@ -956,6 +1006,738 @@ h2 { margin: 0 0 6px; }
   background: #21262d;
 }
 .photo.placeholder { display: grid; place-items: center; font-weight: 700; }
+.photo-imported-label {
+  color: #8b9bb0 !important;
+  font-weight: 600;
+}
+
+.umpire-slips {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 24px 40px;
+}
+.umpire-slips-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: start;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.umpire-slips-head h2 { margin: 0 0 6px; }
+.umpire-slips-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.umpire-slips-modes {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.umpire-slips-modes button.active {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.umpire-blank-count {
+  display: grid;
+  gap: 8px;
+  max-width: 420px;
+  margin-bottom: 18px;
+}
+.umpire-blank-count input {
+  width: 96px;
+  background: #0d1117;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.umpire-pay-pick {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 8px;
+}
+.umpire-pay-grades {
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.umpire-pay-grades legend {
+  padding: 0 6px;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.umpire-pay-grade-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.umpire-pay-grade-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #0d1117;
+  cursor: pointer;
+  user-select: none;
+}
+.umpire-pay-grade-check input {
+  margin: 0;
+  accent-color: var(--gold);
+}
+.umpire-pay-grade-check.is-on {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.umpire-pay-grades .muted {
+  margin: 10px 0 0;
+}
+.umpire-pay-finals {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.umpire-pay-finals h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+.umpire-pay-finals .muted {
+  margin: 0;
+}
+.umpire-pay-finals-count {
+  margin: 0;
+  max-width: none;
+}
+.umpire-pay-venue {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.umpire-pay-venue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.umpire-pay-venue-head h4 {
+  margin: 0 0 2px;
+  font-size: 1rem;
+}
+.umpire-pay-venue-head span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.umpire-pick {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  min-height: 320px;
+}
+@media (max-width: 900px) {
+  .umpire-pick {
+    grid-template-columns: 1fr;
+  }
+}
+.umpire-pick-grades {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: sticky;
+  top: 8px;
+}
+.umpire-pick-grades button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  background: #0d1117;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.umpire-pick-grades button strong {
+  font-size: 13px;
+}
+.umpire-pick-grades button small {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.umpire-pick-grades button.active {
+  border-color: var(--gold);
+  background: rgba(227, 179, 65, 0.08);
+}
+.umpire-pick-grades button.active strong {
+  color: var(--gold);
+}
+.umpire-pick-panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #0d1117;
+  padding: 14px 16px 18px;
+  min-width: 0;
+}
+.umpire-pick-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.umpire-pick-toolbar h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.umpire-pick-toolbar .muted {
+  margin: 0;
+}
+.umpire-pick-rounds {
+  display: grid;
+  gap: 16px;
+}
+.umpire-pick-round header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.umpire-pick-round header h4 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.umpire-pick-round header span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.umpire-pick-matches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+.umpire-match-chip {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  background: #161b22;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 72px;
+}
+.umpire-match-chip-mark {
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: transparent;
+  background: #0d1117;
+}
+.umpire-match-chip-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.umpire-match-chip-teams {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.umpire-match-chip-teams b {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.umpire-match-chip-teams em {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.umpire-match-chip-meta {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.umpire-match-chip.is-on {
+  border-color: var(--gold);
+  background: rgba(227, 179, 65, 0.1);
+}
+.umpire-match-chip.is-on .umpire-match-chip-mark {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: #111;
+}
+.umpire-match-chip:hover {
+  border-color: #8b9bb0;
+}
+.umpire-slips-preview {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.umpire-slips-preview h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+.umpire-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.umpire-slip-preview-card {
+  max-width: 720px;
+  background: #fff;
+  color: #111;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.umpire-slip-preview-card .umpire-slip,
+.umpire-slip-preview-card .umpire-envelope {
+  height: auto;
+  min-height: 0;
+  border: 0;
+  padding: 14px 16px 12px;
+}
+
+.umpire-slip-page {
+  box-sizing: border-box;
+  /* A4 minus typical print margins — keeps 3 slips on one sheet. */
+  height: 270mm;
+  max-height: 270mm;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.umpire-slip-page.is-break {
+  break-before: page;
+  page-break-before: always;
+}
+.umpire-slip {
+  box-sizing: border-box;
+  flex: 1 1 33.333%;
+  height: 90mm;
+  max-height: 90mm;
+  min-height: 0;
+  padding: 3.5mm 6mm 3mm;
+  color: #111;
+  background: #fff;
+  font-family: "Segoe UI", sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 2mm;
+  overflow: hidden;
+}
+.umpire-slip-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 2mm;
+  border-bottom: 2px solid #d60a0a;
+}
+.umpire-slip-brand img {
+  height: 9mm;
+  width: auto;
+  object-fit: contain;
+}
+.umpire-slip-brand p {
+  margin: 0;
+  font-size: 7.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #555;
+}
+.umpire-slip-brand h1 {
+  margin: 1px 0 0;
+  font-size: 12px;
+  line-height: 1.1;
+}
+.umpire-slip-brand h2 {
+  margin: 1px 0 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: #333;
+}
+.umpire-slip-meta-line {
+  display: grid;
+  grid-template-columns:
+    minmax(20mm, 0.7fr)
+    minmax(20mm, 0.7fr)
+    minmax(28mm, 0.95fr)
+    minmax(24mm, 0.95fr)
+    minmax(0, 1.4fr);
+  gap: 2mm;
+  align-items: end;
+  padding: 1mm 0 1.5mm;
+  border-bottom: 1px solid #ddd;
+}
+.umpire-slip-meta-line > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.umpire-slip-meta-line small {
+  font-size: 7.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #666;
+}
+.umpire-slip-meta-line b {
+  display: block;
+  min-height: 5mm;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.15;
+  border-bottom: 1px solid #bbb;
+  padding-bottom: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.umpire-slip-meta-teams {
+  display: flex !important;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+.umpire-slip-meta-teams em {
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #888;
+  font-weight: 700;
+}
+.umpire-slip-meta-teams .umpire-fill {
+  flex: 1;
+  min-width: 18mm;
+}
+.umpire-slip-votes {
+  width: 100%;
+  border-collapse: collapse;
+  flex: 1;
+}
+.umpire-slip-votes th {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #666;
+  text-align: left;
+  padding: 0 2mm 1.2mm 0;
+  border-bottom: 1.5px solid #111;
+}
+.umpire-slip-votes td {
+  padding: 1.8mm 2mm 1.8mm 0;
+  border-bottom: 1px solid #ddd;
+  vertical-align: middle;
+}
+.umpire-slip-votes .pts {
+  width: 9mm;
+  text-align: center;
+  padding-right: 0;
+}
+.umpire-slip-votes .pts b {
+  display: grid;
+  place-items: center;
+  width: 6.5mm;
+  height: 6.5mm;
+  border-radius: 50%;
+  background: #d60a0a;
+  color: #fff;
+  font-size: 11px;
+}
+.umpire-slip-votes .num { width: 14mm; }
+.umpire-fill {
+  display: block;
+  width: 100%;
+  height: 4mm;
+  border-bottom: 1px solid #999;
+}
+.umpire-fill.short { width: 11mm; }
+.umpire-slip-sign {
+  margin-top: auto;
+  flex-shrink: 0;
+}
+.umpire-slip-sign-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 3mm 1.2mm;
+  table-layout: fixed;
+}
+.umpire-slip-sign-table th,
+.umpire-slip-sign-table td {
+  width: 33.33%;
+  vertical-align: bottom;
+  text-align: left;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.umpire-slip-sign-table th {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #d60a0a;
+  padding-bottom: 0.6mm;
+}
+.umpire-slip-sign-table td {
+  display: table-cell;
+}
+.umpire-slip-sign-table small {
+  display: block;
+  margin-bottom: 0.4mm;
+  font-size: 7px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #666;
+  font-weight: 600;
+}
+.umpire-slip-sign-table .umpire-fill {
+  display: block;
+  width: 100%;
+}
+/* 4-3-2-1 needs one extra vote row — tighten so umpire 3 signature stays on the slip. */
+.umpire-slip.is-women-scale {
+  gap: 1.4mm;
+  padding: 3mm 5.5mm 2.5mm;
+}
+.umpire-slip.is-women-scale .umpire-slip-brand {
+  padding-bottom: 1.2mm;
+}
+.umpire-slip.is-women-scale .umpire-slip-brand img {
+  height: 7.5mm;
+}
+.umpire-slip.is-women-scale .umpire-slip-meta-line {
+  padding: 0.5mm 0 0.8mm;
+}
+.umpire-slip.is-women-scale .umpire-slip-meta-line b {
+  min-height: 4mm;
+  font-size: 10.5px;
+}
+.umpire-slip.is-women-scale .umpire-slip-votes td {
+  padding: 1mm 2mm 1mm 0;
+}
+.umpire-slip.is-women-scale .umpire-slip-votes .pts b {
+  width: 5.5mm;
+  height: 5.5mm;
+  font-size: 9.5px;
+}
+.umpire-slip.is-women-scale .umpire-fill {
+  height: 3.1mm;
+}
+.umpire-slip.is-women-scale .umpire-slip-sign-table {
+  border-spacing: 2.2mm 0.7mm;
+}
+.print-sheet.umpire-slips-print .umpire-slip-sign-table,
+.print-sheet.umpire-slips-print .umpire-slip-sign-table th,
+.print-sheet.umpire-slips-print .umpire-slip-sign-table td {
+  border: 0 !important;
+  border-bottom: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  font-size: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+  color: inherit;
+  vertical-align: bottom;
+}
+.print-sheet.umpire-slips-print .umpire-slip-sign-table th {
+  text-align: center !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: #d60a0a !important;
+  padding-bottom: 0.6mm !important;
+  vertical-align: bottom !important;
+}
+
+.umpire-envelope {
+  box-sizing: border-box;
+  height: 99mm;
+  padding: 6mm 8mm 5mm;
+  color: #111;
+  background: #fff;
+  font-family: "Segoe UI", sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 4mm;
+  overflow: hidden;
+  border: 1.5px solid #111;
+}
+.umpire-envelope-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 2.5mm;
+  border-bottom: 2.5px solid #d60a0a;
+}
+.umpire-envelope-brand img {
+  height: 12mm;
+  width: auto;
+  object-fit: contain;
+}
+.umpire-envelope-brand p {
+  margin: 0;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #555;
+}
+.umpire-envelope-brand h1 {
+  margin: 1px 0 0;
+  font-size: 16px;
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.umpire-envelope-brand h2 {
+  margin: 2px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #333;
+}
+.umpire-envelope-hero {
+  display: grid;
+  gap: 2mm;
+  justify-items: center;
+  text-align: center;
+  padding: 3mm 0 2mm;
+  flex: 1;
+  align-content: center;
+}
+.umpire-envelope-round {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #d60a0a;
+  line-height: 1.2;
+  min-height: 5mm;
+}
+.umpire-envelope-round .umpire-fill {
+  width: 40mm;
+  margin: 0 auto;
+}
+.umpire-envelope-match {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  text-align: center;
+  width: 100%;
+}
+.umpire-envelope-match strong {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.02;
+}
+.umpire-envelope-match em {
+  font-style: normal;
+  font-size: 16px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #888;
+  font-weight: 700;
+}
+.umpire-envelope-match .umpire-fill {
+  width: 58mm;
+  height: 9mm;
+}
+.umpire-envelope-grade {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  min-height: 7mm;
+  max-width: 100%;
+}
+.umpire-envelope-grade .umpire-fill {
+  width: 50mm;
+  margin: 0 auto;
+}
+.umpire-envelope-meta-line {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 4mm;
+  align-items: end;
+  padding-top: 2mm;
+  border-top: 1px solid #ddd;
+}
+.umpire-envelope-meta-line > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.umpire-envelope-meta-line small {
+  font-size: 7.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #666;
+}
+.umpire-envelope-meta-line b {
+  display: block;
+  min-height: 5.5mm;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.15;
+  border-bottom: 1px solid #bbb;
+  padding-bottom: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.umpire-envelope-foot {
+  margin: 2mm 0 0;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #666;
+  text-align: center;
+}
 
 .board, .show, .sponsors, .settings { flex: 1; min-height: 0; padding: 20px; overflow: auto; }
 .show { overflow: hidden; }
@@ -1376,25 +2158,40 @@ h2 { margin: 0 0 6px; }
   padding: 8px;
 }
 .settings {
-  padding: 20px;
   overflow: auto;
 }
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px 32px;
-  max-width: 1180px;
+  gap: 14px;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
   align-items: start;
 }
 .settings section {
   margin: 0;
-  padding: 18px 20px 12px;
+  padding: 16px 18px 14px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
-.settings h3 { margin: 0 0 8px; }
+.settings section.settings-span-2,
+.settings section.settings-span-full {
+  grid-column: 1 / -1;
+}
+.settings h3 { margin: 0 0 6px; font-size: 15px; }
+.settings > .settings-grid > section > .muted:first-of-type {
+  margin-top: 0;
+}
 .settings .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.settings .settings-actions {
+  margin-top: 10px;
+  margin-bottom: 8px;
+}
 .settings .path { word-break: break-all; }
 .settings .round-picks,
 .settings .sponsor-picks { margin: 10px 0 14px; }
@@ -1434,10 +2231,145 @@ h2 { margin: 0 0 6px; }
   padding: 8px 10px;
   max-width: 100%;
 }
+.assign-player-photo {
+  margin: 12px 0 8px;
+}
+.assign-player-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.assign-player-list button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  padding: 8px 10px;
+}
+.assign-player-list button img,
+.assign-player-list button i {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #21262d;
+}
+.assign-player-list button span {
+  display: grid;
+  gap: 2px;
+}
+.assign-player-list button small {
+  color: var(--muted);
+}
+.imported-photos-block {
+  margin: 14px 0 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #0d1117;
+}
+.imported-photos-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.imported-photos-head h4 {
+  margin: 0;
+  font-size: 14px;
+}
+.imported-photos-clubs {
+  display: grid;
+  gap: 12px;
+}
+.imported-photos-club-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.imported-photos-club-head h5 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.imported-photos-club-head span {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.imported-photos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.imported-photo-card {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #161b22;
+  min-width: 0;
+}
+.imported-photo-card img,
+.imported-photo-card i {
+  display: block;
+  width: 56px;
+  height: 70px;
+  border-radius: 6px;
+  object-fit: cover;
+  object-position: center top;
+  background: #21262d;
+}
+.imported-photo-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+}
+.imported-photo-copy strong {
+  font-size: 13px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.imported-photo-copy small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.imported-photo-copy button {
+  margin-top: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+}
 .name-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 .settings-help {
   background: #0d1117;
@@ -1458,7 +2390,8 @@ h2 { margin: 0 0 6px; }
 }
 .hotkey-list {
   display: grid;
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
   background: #0d1117;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1467,8 +2400,8 @@ h2 { margin: 0 0 6px; }
 }
 .hotkey-list > div {
   display: grid;
-  grid-template-columns: minmax(92px, auto) 1fr;
-  gap: 12px;
+  grid-template-columns: minmax(84px, auto) 1fr;
+  gap: 10px;
   align-items: start;
 }
 .hotkey-keys {
@@ -1481,9 +2414,22 @@ h2 { margin: 0 0 6px; }
   font-size: 13px;
   line-height: 1.4;
 }
-@media (max-width: 1100px) {
-  .settings-grid,
+@media (max-width: 980px) {
+  .settings-grid { grid-template-columns: 1fr; }
   .name-pair { grid-template-columns: 1fr; }
+  .hotkey-list { grid-template-columns: 1fr; }
+  .specialty-asset-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .specialty-asset-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+@media (max-width: 720px) {
+  .imported-photos-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .toty {
@@ -1544,6 +2490,71 @@ h2 { margin: 0 0 6px; }
 .toty-choice small { display: block; color: var(--muted); margin-top: 2px; }
 .toty-choice.selected { outline: 2px solid var(--gold); }
 .toty-choice.used { opacity: 0.7; }
+.toty-captain-pick {
+  margin: 10px 0 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.toty-captain-pick > .muted {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.toty-captain-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.toty-captain-roles button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+.toty-captain-roles button b {
+  min-width: 1.6em;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.toty-captain-roles button.active {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.toty-leaders {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.toty-leaders li {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  background: #12161c;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.toty-leaders b {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 28px;
+  border-radius: 4px;
+  background: #2a241c;
+  border: 1px solid #5a4d3a;
+  color: #f0e6c8;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.toty-leaders strong { display: block; font-size: 13px; }
+.toty-leaders small { display: block; color: var(--muted); margin-top: 2px; }
+.toty-leaders-empty {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
 
 .life {
   flex: 1;
@@ -2280,10 +3291,327 @@ html.is-printing .app,
 html.is-printing .modal-back { display: none !important; }
 html.is-printing .print-sheet { display: block !important; }
 
+.umpire-pay-sheet {
+  color: #111;
+  font-family: "Segoe UI", sans-serif;
+}
+.umpire-pay-day {
+  box-sizing: border-box;
+  /* One fixture = one page. Keep League on this page with the other grades. */
+  height: 285mm;
+  max-height: 285mm;
+  display: flex;
+  flex-direction: column;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+.umpire-pay-day.is-break {
+  break-before: page;
+  page-break-before: always;
+}
+/*
+ * Same-day Women sheets: keep the Round 8 table layout (one table, equal row
+ * stretch). Shorter days are padded to 4 kick-off slots so each real game stays
+ * the Round 8 / 2pm size; spacer slots print as solid white.
+ */
+.umpire-pay-day.is-by-day .umpire-pay-grade-block.is-spacer th,
+.umpire-pay-day.is-by-day .umpire-pay-grade-block.is-spacer td,
+.print-sheet.umpire-pay-print .umpire-pay-grade-block.is-spacer th,
+.print-sheet.umpire-pay-print .umpire-pay-grade-block.is-spacer td,
+.print-sheet.umpire-pay-print .umpire-pay-grade-block.is-spacer .umpire-pay-grade-row th {
+  border: 0 !important;
+  border-color: #fff !important;
+  background: #fff !important;
+  background-color: #fff !important;
+  color: #fff !important;
+  box-shadow: none !important;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.umpire-pay-day.is-by-day .umpire-pay-grade-block.is-spacer .umpire-fill,
+.print-sheet.umpire-pay-print .umpire-pay-grade-block.is-spacer .umpire-fill {
+  border: 0 !important;
+  border-bottom: 0 !important;
+  background: #fff !important;
+  visibility: hidden;
+}
+.print-sheet.umpire-pay-print th,
+.print-sheet.umpire-pay-print td {
+  padding: 1px 5px;
+  font-size: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+  color: inherit;
+  border-bottom: 1px solid #ddd;
+  vertical-align: bottom;
+}
+.print-sheet.umpire-pay-print thead th {
+  padding: 3px 5px;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #555;
+  border-bottom: 2px solid #111;
+  vertical-align: middle;
+}
+.print-sheet.umpire-pay-print .umpire-pay-grade-row th {
+  padding: 1px 5px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #111;
+  background: #efefef;
+  border-top: 1px solid #ccc;
+  border-bottom: 1px solid #111;
+  vertical-align: middle;
+}
+.umpire-pay-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+  padding-bottom: 5px;
+  border-bottom: 2px solid #d60a0a;
+}
+.umpire-pay-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.umpire-pay-head img {
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+}
+.umpire-pay-brand p,
+.umpire-pay-match p {
+  margin: 0;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #555;
+}
+.umpire-pay-brand h1 {
+  margin: 1px 0 0;
+  font-size: 17px;
+  line-height: 1.1;
+}
+.umpire-pay-match {
+  text-align: right;
+  max-width: 48%;
+}
+.umpire-pay-match strong {
+  display: block;
+  margin-top: 1px;
+  font-size: 13px;
+  line-height: 1.15;
+}
+.umpire-pay-match strong.umpire-pay-match-blank {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 160px;
+}
+.umpire-pay-match strong.umpire-pay-match-blank .umpire-fill {
+  flex: 1;
+  min-width: 48px;
+  min-height: 14px;
+  height: 14px;
+}
+.umpire-pay-match strong em {
+  font-style: normal;
+  color: #888;
+  margin: 0 5px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.umpire-pay-match span {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: #444;
+  font-weight: 600;
+}
+.umpire-pay-match-meta-blank {
+  display: grid !important;
+  grid-template-columns: 0.9fr 0.9fr 1.2fr;
+  gap: 8px;
+  margin-top: 4px !important;
+  min-width: 200px;
+}
+.umpire-pay-match-meta-blank .umpire-fill {
+  min-height: 12px;
+  height: 12px;
+}
+.umpire-pay-table {
+  width: 100%;
+  flex: 1 1 auto;
+  height: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 10.5px;
+  line-height: 1.1;
+}
+.umpire-pay-table thead {
+  display: table-header-group;
+}
+.umpire-pay-table thead th {
+  padding: 3px 5px;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #555;
+  text-align: left;
+  border-bottom: 2px solid #111;
+  vertical-align: middle;
+  background: #fff;
+}
+.umpire-pay-grade-block {
+  /* Never kick a whole grade (League) onto the next page. */
+  break-inside: auto;
+  page-break-inside: auto;
+}
+.umpire-pay-grade-row th {
+  padding: 1px 5px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: #111;
+  background: #efefef;
+  border-top: 1px solid #ccc;
+  border-bottom: 1px solid #111;
+  line-height: 1.15;
+  height: 0;
+}
+.umpire-pay-table thead th {
+  height: 0;
+}
+.umpire-pay-table td {
+  padding: 1px 5px 2px;
+  border-bottom: 1px solid #ddd;
+  text-align: left;
+  vertical-align: bottom;
+  height: 1%;
+}
+.umpire-pay-table .role {
+  width: 22%;
+  font-weight: 700;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.umpire-pay-table .pay {
+  width: 18%;
+  white-space: nowrap;
+  font-size: 9.5px;
+  vertical-align: middle;
+}
+.umpire-pay-table .pay b {
+  font-weight: 700;
+}
+.umpire-pay-table .umpire-fill {
+  display: block;
+  width: 100%;
+  min-height: 18px;
+  height: 100%;
+  border-bottom: 1.5px solid #777;
+}
+.umpire-pay-table .umpire-fill.short {
+  width: 70%;
+  min-width: 36px;
+  height: 18px;
+}
+.umpire-pay-rates {
+  overflow-x: auto;
+}
+.umpire-pay-rates table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.umpire-pay-rates th,
+.umpire-pay-rates td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border, #333);
+  text-align: left;
+  vertical-align: middle;
+}
+.umpire-pay-rates thead th {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #888);
+}
+.umpire-pay-rates tbody th {
+  white-space: normal;
+  font-weight: 700;
+}
+.umpire-pay-rates tbody th small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted, #888);
+}
+.umpire-pay-rates input {
+  width: 88px;
+  max-width: 100%;
+}
+.print-sheet.umpire-slips-print,
+.print-sheet.umpire-envelopes-print,
+.print-sheet.umpire-pay-print {
+  color: #111;
+}
+.umpire-envelope-sheet {
+  display: block;
+}
+.print-sheet.umpire-slips-print .umpire-slip-page {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.print-sheet.umpire-slips-print .umpire-slip {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  border-bottom: 1px dashed #999;
+}
+.print-sheet.umpire-slips-print .umpire-slip:last-child {
+  border-bottom: 0;
+}
+.print-sheet.umpire-envelopes-print .umpire-envelope {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  border-bottom: 1px dashed #999;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+}
+.print-sheet.umpire-envelopes-print .umpire-envelope:nth-child(3n) {
+  border-bottom: 0;
+  break-after: page;
+  page-break-after: always;
+}
+.print-sheet.umpire-envelopes-print .umpire-envelope:last-child {
+  border-bottom: 0;
+  break-after: auto;
+  page-break-after: auto;
+}
+
 @media print {
   @page { size: A4; margin: 12mm; }
   @page announcer { size: A4; margin: 5mm; }
+  @page umpire-slips { size: A4; margin: 0; }
+  @page umpire-pay { size: A4; margin: 6mm; }
   .print-sheet.announcer { page: announcer; }
+  .print-sheet.umpire-slips-print,
+  .print-sheet.umpire-envelopes-print { page: umpire-slips; }
+  .print-sheet.umpire-pay-print { page: umpire-pay; }
   html, body, #root {
     background: #fff !important;
     color: #111 !important;
@@ -2293,4 +3621,16 @@ html.is-printing .print-sheet { display: block !important; }
   .app { display: none !important; }
   .print-sheet { display: block !important; }
   .modal-back { display: none !important; }
+  .print-sheet.umpire-slips-print .umpire-slip-page {
+    height: 270mm !important;
+    max-height: 270mm !important;
+  }
+  .print-sheet.umpire-slips-print .umpire-slip {
+    height: 90mm !important;
+    max-height: 90mm !important;
+  }
+  .print-sheet.umpire-envelopes-print .umpire-envelope {
+    height: 99mm;
+    max-height: 99mm;
+  }
 }

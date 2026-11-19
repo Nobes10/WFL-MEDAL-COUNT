@@ -203,39 +203,76 @@ function TotySponsorMark({ sponsor, compact }) {
   );
 }
 
-function TotyLine({ picks, spots, reveal }) {
+function TotySpotCard({ spot, player, justIn }) {
+  if (!player) {
+    return (
+      <div className={`vote-col${player === null ? ' shown' : ''}`}>
+        <div className="vote-slot">
+          <b>{spot.posLabel}</b>
+        </div>
+      </div>
+    );
+  }
+  const captain = player.totyCaptain;
+  const pick = {
+    name: player.name || 'To be announced',
+    clubName: player.clubName,
+    clubLabel:
+      [player.clubName, player.number ? `No. ${player.number}` : null, captain?.label]
+        .filter(Boolean)
+        .join(' · ') || spot.posName,
+    photoUrl: player.photoUrl || null,
+    logoUrl: player.logoUrl || null,
+    themeClubName: player.themeClubName || player.clubName,
+    totyCaptain: captain ?? null,
+  };
+  return (
+    <div className={`vote-col shown${justIn ? ' just-in' : ''}`}>
+      <VoteCard
+        pick={pick}
+        countLabel={
+          captain
+            ? `${spot.posName || spot.posLabel} · ${captain.short}`
+            : spot.posName || spot.posLabel
+        }
+      />
+    </div>
+  );
+}
+
+function TotyLine({ picks, spots, reveal, lineId }) {
   const count = spots?.length || 3;
   const shown = typeof reveal === 'number' ? reveal : count;
+  const isBench =
+    lineId === 'bench' || (spots ?? []).some((spot) => String(spot.spotId || '').startsWith('int-'));
+  const cells = isBench ? (spots ?? []).slice(0, 8) : spots ?? [];
+  // 4 or fewer interchange: same single-row layout as other lines.
+  const useBenchWrap = isBench && cells.length > 4;
+
+  const renderSpot = (spot, index) => {
+    const revealed = index < shown;
+    const player = revealed ? picks?.[spot.spotId] ?? null : undefined;
+    return (
+      <TotySpotCard
+        key={spot.spotId}
+        spot={spot}
+        player={player}
+        justIn={revealed && index === shown - 1}
+      />
+    );
+  };
+
+  if (!useBenchWrap) {
+    return (
+      <div className={`votes-row toty-line-row cols-${cells.length || count}`}>
+        {cells.map((spot, index) => renderSpot(spot, index))}
+      </div>
+    );
+  }
+
   return (
-    <div className={`votes-row toty-line-row cols-${count}`}>
-      {(spots ?? []).map((spot, index) => {
-        if (index >= shown) {
-          return (
-            <div key={spot.spotId} className="vote-col">
-              <div className="vote-slot">
-                <b>{spot.posLabel}</b>
-              </div>
-            </div>
-          );
-        }
-        const player = picks?.[spot.spotId];
-        const pick = {
-          name: player?.name || 'To be announced',
-          clubName: player?.clubName,
-          clubLabel: [player?.clubName, player?.number ? `No. ${player.number}` : null].filter(Boolean).join(' · ') || spot.posName,
-          photoUrl: player?.photoUrl || null,
-          logoUrl: player?.logoUrl || null,
-          themeClubName: player?.themeClubName || player?.clubName,
-        };
-        return (
-          <div key={spot.spotId} className={`vote-col shown${index === shown - 1 ? ' just-in' : ''}`}>
-            <VoteCard
-              pick={pick}
-              countLabel={spot.posName || spot.posLabel}
-            />
-          </div>
-        );
-      })}
+    <div className="votes-row toty-line-row toty-bench-announce">
+      {cells.map((spot, index) => renderSpot(spot, index))}
     </div>
   );
 }
@@ -244,11 +281,18 @@ function TotyStage({ state }) {
   const toty = state.toty ?? {};
   const sponsor = toty.sponsor;
   const beat = toty.beat;
+  const benchSpots = beat?.spots?.length ?? 0;
+  const benchWrap = beat?.lineId === 'bench' && benchSpots > 4;
   if (beat?.type === 'line') {
     return (
-      <div className="stage type-toty">
+      <div className={`stage type-toty${benchWrap ? ' toty-bench-stage' : ''}`}>
         <StageHeader state={state} title={beat.lineLabel || 'Team of the Year'} season={state?.season} />
-        <TotyLine picks={toty.picks} spots={beat.spots} reveal={beat.reveal} />
+        <TotyLine
+          picks={toty.picks}
+          spots={beat.spots}
+          reveal={beat.reveal}
+          lineId={beat.lineId}
+        />
         <TotySponsorMark sponsor={sponsor} compact />
       </div>
     );
@@ -261,7 +305,11 @@ function TotyStage({ state }) {
         season={state?.season}
       />
       <div className="toty-show">
-        <TotyPitch picks={toty.picks ?? {}} revealStep={beat?.revealStep ?? 0}>
+        <TotyPitch
+          picks={toty.picks ?? {}}
+          revealStep={beat?.revealStep ?? 0}
+          benchCount={toty.benchCount}
+        >
           <div className={`toty-presented${sponsor ? '' : ' empty'}`}>
             <p>Presented by</p>
             {sponsor?.imageUrl ? (
@@ -1107,7 +1155,11 @@ function WinnerCard({ winner, life, badge }) {
       <div className="player-stack">
         {winner.photoUrl ? (
           <div className="player-photo">
-            <img className="player-cutout" src={winner.photoUrl} alt={winner.name} />
+            <img
+              className={`player-cutout${winner.photoImported ? ' is-imported' : ''}`}
+              src={winner.photoUrl}
+              alt={winner.name}
+            />
           </div>
         ) : null}
         <div className="player-id">
@@ -1175,7 +1227,11 @@ function VoteCard({ pick, countLabel }) {
       <div className="player-stack">
         {pick.photoUrl ? (
           <div className="player-photo">
-            <img className="player-cutout" src={pick.photoUrl} alt="" />
+            <img
+              className={`player-cutout${pick.photoImported ? ' is-imported' : ''}`}
+              src={pick.photoUrl}
+              alt=""
+            />
           </div>
         ) : null}
         <div className="player-id">

@@ -46,6 +46,11 @@ contextBridge.exposeInMainWorld('wflMedal', {
   approveAllCrowdPhotos: () => ipcRenderer.invoke('approve-all-crowd-photos'),
   importCrowdPhotos: () => ipcRenderer.invoke('import-crowd-photos'),
   pickCrowdArt: () => ipcRenderer.invoke('pick-crowd-art'),
+  importPlayerPhotos: () => ipcRenderer.invoke('import-player-photos'),
+  importPlayerPhotoFolder: () => ipcRenderer.invoke('import-player-photo-folder'),
+  importPlayerPhotoForPlayer: (playerId) => ipcRenderer.invoke('import-player-photo-for-player', playerId),
+  deleteImportedPlayerPhoto: (playerId) => ipcRenderer.invoke('delete-imported-player-photo', playerId),
+  refreshAudiencePhotos: () => ipcRenderer.invoke('refresh-audience-photos'),
   clearCrowdArt: () => ipcRenderer.invoke('clear-crowd-art'),
   openCrowdFolder: () => ipcRenderer.invoke('open-crowd-folder'),
   resetCrowdPhotoCode: () => ipcRenderer.invoke('reset-crowd-photo-code'),
@@ -66,6 +71,7 @@ contextBridge.exposeInMainWorld('wflMedal', {
   clearLifeMembers: () => ipcRenderer.invoke('clear-life-members'),
   clearEnteredData: () => ipcRenderer.invoke('clear-entered-data'),
   saveNight: () => ipcRenderer.invoke('save-night'),
+  importNight: () => ipcRenderer.invoke('import-night'),
   showPresentation: () => ipcRenderer.invoke('show-presentation'),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
   savePrintPdf: (fileName) => ipcRenderer.invoke('save-print-pdf', fileName),
@@ -75,7 +81,13 @@ contextBridge.exposeInMainWorld('wflMedal', {
   setCompetition: (value) => ipcRenderer.invoke('set-competition', value),
   setPresentTarget: (target) => ipcRenderer.invoke('set-present-target', target),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
+  saveTextFile: (payload) => ipcRenderer.invoke('save-text-file', payload),
   setTotyPlayer: (gradeId, positionId, playerId) => ipcRenderer.invoke('set-toty-player', gradeId, positionId, playerId),
+  setTotyCaptain: (gradeId, playerId, roleId) =>
+    ipcRenderer.invoke('set-toty-captain', gradeId, playerId, roleId),
+  addTotyInterchange: (gradeId) => ipcRenderer.invoke('add-toty-interchange', gradeId),
+  removeTotyInterchange: (gradeId, positionId) =>
+    ipcRenderer.invoke('remove-toty-interchange', gradeId, positionId),
   clearToty: (gradeId) => ipcRenderer.invoke('clear-toty', gradeId),
   onState: (callback) => {
     const handler = (_event, state) => callback(state);
