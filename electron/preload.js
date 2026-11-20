@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('wflMedal', {
   showScoreboard: () => ipcRenderer.invoke('show-scoreboard'),
   showLeaderboard: (scope) => ipcRenderer.invoke('show-leaderboard', scope),
   showSplash: () => ipcRenderer.invoke('show-splash'),
+  showEndSplash: () => ipcRenderer.invoke('show-end-splash'),
   showCrowd: () => ipcRenderer.invoke('show-crowd'),
   setCrowdShareBase: (base) => ipcRenderer.invoke('set-crowd-share-base', base),
   approveCrowdPhoto: (file) => ipcRenderer.invoke('approve-crowd-photo', file),

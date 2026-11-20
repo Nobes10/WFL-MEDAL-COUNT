@@ -14,7 +14,7 @@ import { copyFileSync, existsSync, readFileSync, readdirSync, unlinkSync, writeF
 import { basename, extname, join } from 'path';
 import { printDocument } from './print.js';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, leagueGradeFrom, totyGradeFrom, clampTotyStep, clampLifeMemberStep, clampCueStep, GOALKICKER_LAST_STEP, AWARD_LAST_STEP, normalizeLifeMembers, normalizeNightExtra, normalizeNightExtras, normalizeToty, normalizeTotyCaptains, setTotyCaptainAssignment, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition, isGoalkickerCue, isAwardCue, voteScaleForGrade, voteKeyForPoints, LEAGUE_CLUB_NAMES, canonicalClubKey, displayLeagueClubName, buildTotyBeats, clampTotyBenchCount, isTotyPositionId, removeTotyBenchSlot, resizeTotyBenchPicks, totyPositions, TOTY_DEFAULT_BENCH_COUNT, TOTY_MAX_BENCH_COUNT } from './constants.js';
+import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, leagueGradeFrom, totyGradeFrom, clampTotyStep, clampLifeMemberStep, clampCueStep, GOALKICKER_LAST_STEP, AWARD_LAST_STEP, normalizeLifeMembers, normalizeNightExtra, normalizeNightExtras, normalizeToty, normalizeTotyCaptains, setTotyCaptainAssignment, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition, isGoalkickerCue, isAwardCue, voteScaleForGrade, voteKeyForPoints, LEAGUE_CLUB_NAMES, canonicalClubKey, displayLeagueClubName, buildTotyBeats, clampTotyBenchCount, isTotyPositionId, removeTotyBenchSlot, resizeTotyBenchPicks, totyPositions, TOTY_DEFAULT_BENCH_COUNT, TOTY_MAX_BENCH_COUNT, isEndSplashRunsheetId } from './constants.js';
 import { playerName } from './tally.js';
 import { bumpMediaRevision, ensureStoreDirs, installClubLogoOverrides, loadStore, saveStore, storePaths } from './store.js';
 import { syncSeason, refreshFixtureScores, ensureWebsiteClubLogos, applyClubLogoFiles } from './sync.js';
@@ -447,6 +447,8 @@ function activateQueueItem(index, { atEnd = false } = {}) {
   stopScoreboardLive();
   if (item.type === 'splash') {
     store.audienceView = 'splash';
+    store.splashMode = isEndSplashRunsheetId(item.id) ? 'end' : 'opening';
+    decoratedCache = null;
     return true;
   }
   if (item.type === 'cue') {
@@ -503,7 +505,8 @@ function syncQueueToView(view) {
   const queue = normalizePresentationQueue(store.presentation?.queue);
   store.presentation.queue = queue;
   const index = queue.findIndex((item) => {
-    if (view === 'splash') return item.type === 'splash';
+    if (view === 'splash-end') return item.type === 'splash' && isEndSplashRunsheetId(item.id);
+    if (view === 'splash') return item.type === 'splash' && !isEndSplashRunsheetId(item.id);
     if (view === 'cue') return item.type === 'cue' && item.id === store.cueKey;
     if (view === 'toty') return item.type === 'toty';
     if (view === 'lifemembers') return item.type === 'lifemembers';
@@ -1219,7 +1222,18 @@ app.whenReady().then(() => {
 
   ipcMain.handle('show-splash', () => {
     store.audienceView = 'splash';
+    store.splashMode = 'opening';
     syncQueueToView('splash');
+    stopScoreboardLive();
+    persist();
+    if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();
+    return emitState();
+  });
+
+  ipcMain.handle('show-end-splash', () => {
+    store.audienceView = 'splash';
+    store.splashMode = 'end';
+    syncQueueToView('splash-end');
     stopScoreboardLive();
     persist();
     if (!audienceWindow || audienceWindow.isDestroyed()) ensurePresentOutput();

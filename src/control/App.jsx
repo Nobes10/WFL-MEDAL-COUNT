@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   UMPIRE_PAY_BANDS,
@@ -22,6 +22,7 @@ const VOTES_SCALE_KEY = 'wfl-votes-panel-scale';
 const VOTES_SCALE_MIN = 0.55;
 const VOTES_SCALE_MAX = 1.35;
 const RUNSHEET_SPLASH = 'splash';
+const RUNSHEET_SPLASH_END = 'splash-end';
 const RUNSHEET_TOTY = 'toty';
 const RUNSHEET_LIFE = 'lifemembers';
 const RUNSHEET_GOALKICKER = 'leadingGoalkicker';
@@ -96,32 +97,38 @@ function runsheetIncludeKey(competition) {
 
 function runsheetRowOwner(id, womenIds, menIds) {
   const key = String(id);
-  if (key === RUNSHEET_SPLASH) return 'both';
+  if (isSplashRowId(key)) return 'drop';
   if (key === RUNSHEET_GOALKICKER || isGuestCueId(key) || isAwardCueId(key)) return 'both';
   if (key === RUNSHEET_TOTY || key === RUNSHEET_LIFE) return 'wfl';
-  if (key.startsWith(`${RUNSHEET_SPLASH}-before-`)) {
-    const gradeId = key.slice(`${RUNSHEET_SPLASH}-before-`.length);
-    if (womenIds.has(gradeId)) return 'wwfl';
-    if (menIds.has(gradeId)) return 'wfl';
-    return 'drop';
-  }
   if (key.startsWith('leaderboard-')) {
     const gradeId = key.slice('leaderboard-'.length);
     if (womenIds.has(gradeId)) return 'wwfl';
     if (menIds.has(gradeId)) return 'wfl';
     return 'drop';
   }
-  if (key.startsWith(`${RUNSHEET_SPLASH}-`)) return 'both';
   if (womenIds.has(key)) return 'wwfl';
   if (menIds.has(key)) return 'wfl';
   return 'drop';
+}
+
+function stripSplashIds(ids) {
+  return (ids ?? []).filter((id) => !isSplashRowId(id));
+}
+
+function stripSplashInclude(flags) {
+  const out = {};
+  for (const [id, value] of Object.entries(flags ?? {})) {
+    if (isSplashRowId(id)) continue;
+    out[id] = value;
+  }
+  return out;
 }
 
 function splitLegacyRunsheet(order, include, roster) {
   const womenIds = new Set((roster ?? []).filter((grade) => grade.women).map((grade) => String(grade.id)));
   const menIds = new Set((roster ?? []).filter((grade) => !grade.women).map((grade) => String(grade.id)));
   const nextOrder = { wfl: [], wwfl: [] };
-  for (const id of order ?? []) {
+  for (const id of stripSplashIds(order)) {
     const owner = runsheetRowOwner(id, womenIds, menIds);
     if (owner === 'both' || owner === 'wfl') nextOrder.wfl.push(id);
     if (owner === 'both' || owner === 'wwfl') nextOrder.wwfl.push(id);
@@ -150,12 +157,12 @@ function loadRunsheetState() {
     return {
       ready: true,
       order: {
-        wfl: readIdList(runsheetOrderKey('wfl')),
-        wwfl: readIdList(runsheetOrderKey('wwfl')),
+        wfl: stripSplashIds(readIdList(runsheetOrderKey('wfl'))),
+        wwfl: stripSplashIds(readIdList(runsheetOrderKey('wwfl'))),
       },
       include: {
-        wfl: readFlagMap(runsheetIncludeKey('wfl')),
-        wwfl: readFlagMap(runsheetIncludeKey('wwfl')),
+        wfl: stripSplashInclude(readFlagMap(runsheetIncludeKey('wfl'))),
+        wwfl: stripSplashInclude(readFlagMap(runsheetIncludeKey('wwfl'))),
       },
     };
   }
@@ -163,8 +170,8 @@ function loadRunsheetState() {
     ready: false,
     order: { wfl: [], wwfl: [] },
     include: { wfl: {}, wwfl: {} },
-    legacyOrder: readIdList(RUNSHEET_ORDER_KEY),
-    legacyInclude: readFlagMap(RUNSHEET_INCLUDE_KEY),
+    legacyOrder: stripSplashIds(readIdList(RUNSHEET_ORDER_KEY)),
+    legacyInclude: stripSplashInclude(readFlagMap(RUNSHEET_INCLUDE_KEY)),
   };
 }
 
@@ -220,20 +227,12 @@ function isSplashRowId(id) {
   return key === RUNSHEET_SPLASH || key.startsWith(`${RUNSHEET_SPLASH}-`);
 }
 
-function newSplashId() {
-  return `${RUNSHEET_SPLASH}-${Date.now().toString(36)}${Math.floor(Math.random() * 36).toString(36)}`;
-}
-
 function newGuestId() {
   return `cue-${Date.now().toString(36)}${Math.floor(Math.random() * 36).toString(36)}`;
 }
 
 function newAwardId() {
   return `award-${Date.now().toString(36)}${Math.floor(Math.random() * 36).toString(36)}`;
-}
-
-function preSplashId(targetId) {
-  return `${RUNSHEET_SPLASH}-before-${targetId}`;
 }
 
 function leaderboardRowId(gradeId) {
@@ -251,12 +250,11 @@ function extraById(state, id) {
 }
 
 function defaultRunsheetRows(decks, extras) {
-  const rows = [{ type: 'splash', id: RUNSHEET_SPLASH }];
-  (decks ?? []).forEach((item, index) => {
-    if (index > 0) rows.push({ type: 'splash', id: preSplashId(item.id) });
+  const rows = [];
+  for (const item of decks ?? []) {
     rows.push({ type: 'grade', id: item.id });
     rows.push({ type: 'leaderboard', id: leaderboardRowId(item.id), gradeId: String(item.id) });
-  });
+  }
   rows.push({ type: 'cue', id: RUNSHEET_GOALKICKER });
   rows.push({ type: 'toty', id: RUNSHEET_TOTY });
   rows.push({ type: 'lifemembers', id: RUNSHEET_LIFE });
@@ -266,33 +264,79 @@ function defaultRunsheetRows(decks, extras) {
   return rows;
 }
 
+function leaderboardBelongsToGrade(leaderboardRow, gradeRow) {
+  if (gradeRow?.type !== 'grade' || leaderboardRow?.type !== 'leaderboard') return false;
+  const gradeId = String(gradeRow.id || '');
+  const boardId = String(leaderboardRow.id || '');
+  const boardGrade =
+    String(leaderboardRow.gradeId || '').trim() ||
+    (boardId.startsWith('leaderboard-') ? boardId.slice('leaderboard-'.length) : '');
+  return Boolean(gradeId) && boardGrade === gradeId;
+}
+
+/** Index of the row the progress line should sit after (−1 = before the first row). */
+function runsheetProgressAfterIndex(rows, state) {
+  const list = rows ?? [];
+  if (!list.length) return null;
+  const runCurrent = String(state?.presentation?.runCurrent || '');
+  const view = state?.audienceView;
+
+  const currentIndex = list.findIndex((row) => row.id === runCurrent);
+  if (currentIndex >= 0) return currentIndex;
+
+  const between = runCurrent.match(/^splash-between-(\d+)$/);
+  if (between) {
+    const n = Number(between[1]);
+    if (Number.isFinite(n) && n > 0) return Math.min(list.length - 1, n - 1);
+  }
+
+  if (runCurrent === RUNSHEET_SPLASH_END || (view === 'splash' && state?.splash?.mode === 'end')) {
+    return list.length ? list.length - 1 : null;
+  }
+
+  if (view === 'splash' || runCurrent === RUNSHEET_SPLASH || runCurrent === 'splash') {
+    return -1;
+  }
+
+  return null;
+}
+
+/**
+ * Splash is not listed on the night page.
+ * Opening splash leads the night; one splash sits between items, but not between a grade and its leaderboard;
+ * closing splash ends the night.
+ */
+function withSplashesBetween(rows, { opening = true, closing = true } = {}) {
+  const items = [];
+  const list = rows ?? [];
+  if (opening && list.length) {
+    items.push({ type: 'splash', id: RUNSHEET_SPLASH });
+  }
+  list.forEach((row, index) => {
+    const prev = index > 0 ? list[index - 1] : null;
+    if (index > 0 && !leaderboardBelongsToGrade(row, prev)) {
+      items.push({ type: 'splash', id: `${RUNSHEET_SPLASH}-between-${index}` });
+    }
+    items.push(row);
+  });
+  if (closing && list.length) {
+    items.push({ type: 'splash', id: RUNSHEET_SPLASH_END });
+  }
+  return items;
+}
+
 function runsheetRowForComp(row, _competition, grades) {
   const listed = (gradeId) => (grades ?? []).some((item) => String(item.id) === String(gradeId));
+  if (row.type === 'splash') return false;
   if (row.type === 'grade' || row.type === 'leaderboard') {
     const gradeId = row.type === 'leaderboard' ? row.gradeId : row.id;
     return listed(gradeId);
   }
   if (row.type === 'toty' || row.type === 'lifemembers' || row.type === 'cue') return true;
-  if (row.type === 'splash' && String(row.id).startsWith(`${RUNSHEET_SPLASH}-before-`)) {
-    const gradeId = String(row.id).slice(`${RUNSHEET_SPLASH}-before-`.length);
-    return listed(gradeId);
-  }
   return true;
 }
 
-function splashIntroduces(row, rows, state) {
-  const index = rows.findIndex((item) => item.id === row.id);
-  const next = index >= 0 ? rows[index + 1] : null;
-  if (next?.type !== 'grade') return null;
-  return nightDecks(state, state.competition).find((item) => item.id === next.id) ?? null;
-}
-
 function runsheetRowInfo(row, rows, state) {
-  const splashCount = rows.filter((item) => item.type === 'splash').length;
-  const splashNumber =
-    row.type === 'splash'
-      ? rows.slice(0, rows.findIndex((item) => item.id === row.id) + 1).filter((item) => item.type === 'splash').length
-      : 0;
   const decks = nightDecks(state, state.competition);
   const deck =
     row.type === 'grade'
@@ -300,8 +344,7 @@ function runsheetRowInfo(row, rows, state) {
       : row.type === 'leaderboard'
         ? decks.find((item) => String(item.id) === String(row.gradeId))
         : null;
-  const intro = row.type === 'splash' ? splashIntroduces(row, rows, state) : null;
-  const gradeLabelText = deckLabel(deck || intro, decks);
+  const gradeLabelText = deckLabel(deck, decks);
   const roundHint = deck
     ? deck.firstRound != null && deck.lastRound != null
       ? deck.firstRound === deck.lastRound
@@ -312,46 +355,33 @@ function runsheetRowInfo(row, rows, state) {
         : null
     : null;
   const title =
-    row.type === 'splash'
-      ? intro && row.id !== RUNSHEET_SPLASH
-        ? `Pre-screen · ${gradeLabelText}`
-        : splashCount > 1 && row.id !== RUNSHEET_SPLASH
-          ? `Splash ${splashNumber}`
-          : 'Opening splash'
-      : row.type === 'leaderboard'
-        ? `Leaderboard · ${gradeLabelText}`
-        : row.type === 'toty'
-          ? 'Team of the year'
-          : row.type === 'lifemembers'
-            ? 'Life members'
-            : row.type === 'cue'
-              ? extraById(state, row.id)?.title || 'Run sheet'
-              : gradeLabelText;
-  const clubHint = (state.splash?.teams ?? []).length
-    ? `${state.splash?.title || 'WFL Medal Count'} · ${state.splash.teams.length} clubs A–Z`
-    : 'WFL Medal Count and all club logos';
-  const detail =
-    row.type === 'splash'
-      ? intro && row.id !== RUNSHEET_SPLASH
-        ? `Before ${intro.medalTitle || intro.name}`
-        : clubHint
-      : row.type === 'leaderboard'
-        ? deck?.medalTitle
-          ? `Full tally · ${deck.medalTitle}`
-          : 'Full tally for this grade'
-        : row.type === 'toty'
-          ? 'Lines one at a time, then the field'
-          : row.type === 'lifemembers'
-          ? (state.lifeMembers?.members ?? []).length
-            ? `${state.lifeMembers.members.length} ${state.lifeMembers.members.length === 1 ? 'recipient' : 'recipients'}`
-            : 'Add recipients on the Life members tab'
+    row.type === 'leaderboard'
+      ? `Leaderboard · ${gradeLabelText}`
+      : row.type === 'toty'
+        ? 'Team of the year'
+        : row.type === 'lifemembers'
+          ? 'Life members'
           : row.type === 'cue'
-            ? extraById(state, row.id)?.kind === 'goalkicker' && state.leadingGoalkicker
-              ? `${state.leadingGoalkicker.name} · ${state.leadingGoalkicker.goals} ${
-                  state.leadingGoalkicker.goals === 1 ? 'goal' : 'goals'
-                }`
-              : extraById(state, row.id)?.detail || ''
-          : [deck?.medalTitle, roundHint].filter(Boolean).join(' · ');
+            ? extraById(state, row.id)?.title || 'Run sheet'
+            : gradeLabelText;
+  const detail =
+    row.type === 'leaderboard'
+      ? deck?.medalTitle
+        ? `Full tally · ${deck.medalTitle}`
+        : 'Full tally for this grade'
+      : row.type === 'toty'
+        ? 'Lines one at a time, then the field'
+        : row.type === 'lifemembers'
+        ? (state.lifeMembers?.members ?? []).length
+          ? `${state.lifeMembers.members.length} ${state.lifeMembers.members.length === 1 ? 'recipient' : 'recipients'}`
+          : 'Add recipients on the Life members tab'
+        : row.type === 'cue'
+          ? extraById(state, row.id)?.kind === 'goalkicker' && state.leadingGoalkicker
+            ? `${state.leadingGoalkicker.name} · ${state.leadingGoalkicker.goals} ${
+                state.leadingGoalkicker.goals === 1 ? 'goal' : 'goals'
+              }`
+            : extraById(state, row.id)?.detail || ''
+        : [deck?.medalTitle, roundHint].filter(Boolean).join(' · ');
   return { title, detail, isGrade: row.type === 'grade' };
 }
 
@@ -363,13 +393,7 @@ function orderRunsheetRows(decks, savedOrder, extras) {
   const seen = new Set();
   for (const id of savedOrder) {
     const key = String(id);
-    if (!key || seen.has(key)) continue;
-    if (key === `${RUNSHEET_SPLASH}-before-${RUNSHEET_GOALKICKER}`) continue;
-    if (isSplashRowId(key) && !byId.has(key)) {
-      ordered.push({ type: 'splash', id: key });
-      seen.add(key);
-      continue;
-    }
+    if (!key || seen.has(key) || isSplashRowId(key)) continue;
     const row = byId.get(key);
     if (!row) continue;
     ordered.push(row);
@@ -378,10 +402,6 @@ function orderRunsheetRows(decks, savedOrder, extras) {
   }
   for (const row of defaults) {
     if (!byId.has(String(row.id))) continue;
-    if (row.type === 'splash' && row.id !== RUNSHEET_SPLASH) {
-      byId.delete(String(row.id));
-      continue;
-    }
     if (row.type === 'cue' && row.id !== RUNSHEET_GOALKICKER) {
       byId.delete(String(row.id));
       continue;
@@ -1240,10 +1260,11 @@ export function App() {
         : splitLegacyRunsheet(current.legacyOrder, current.legacyInclude, state?.gradeRoster ?? []);
       const prev = base.order?.[runsheetComp] ?? [];
       const next = typeof updater === 'function' ? updater(prev) : updater;
+      const cleaned = (Array.isArray(next) ? next : []).filter((id) => !isSplashRowId(id));
       return {
         ...base,
         ready: true,
-        order: { ...base.order, [runsheetComp]: next },
+        order: { ...base.order, [runsheetComp]: cleaned },
       };
     });
   }
@@ -1292,32 +1313,6 @@ export function App() {
 
   function restoreRunsheet(id) {
     setRunsheetRow(id, true);
-  }
-
-  function addSplash() {
-    const decks = nightDecks(state, competition);
-    const id = newSplashId();
-    setRunsheetOrder((current) => {
-      const ids = orderRunsheetRows(decks, current, extrasFrom(state)).map((row) => row.id);
-      let insertAt = 0;
-      ids.forEach((rowId, index) => {
-        if (isSplashRowId(rowId)) insertAt = index + 1;
-      });
-      const copy = ids.slice();
-      copy.splice(insertAt, 0, id);
-      return copy;
-    });
-  }
-
-  function removeSplash(id) {
-    if (!isSplashRowId(id) || id === RUNSHEET_SPLASH) return;
-    const decks = nightDecks(state, competition);
-    setRunsheetOrder((current) => orderRunsheetRows(decks, current, extrasFrom(state)).map((row) => row.id).filter((rowId) => rowId !== id));
-    setRunsheetInclude((current) => {
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
   }
 
   async function addNightCue(kind) {
@@ -1384,11 +1379,17 @@ export function App() {
       runsheetRowForComp(row, competition, decks)
     );
     const startAt = fromId ? rows.findIndex((row) => row.id === fromId) : 0;
-    const items = rows.slice(Math.max(0, startAt)).filter((row) => runsheetIncluded(row.id)).map((row) => ({
-      type: row.type,
-      id: row.id,
-      start: row.type === 'grade' ? presoStarts[row.id] : undefined,
-    }));
+    const fromStart = !fromId || startAt <= 0;
+    const content = rows
+      .slice(Math.max(0, startAt))
+      .filter((row) => runsheetIncluded(row.id) && row.type !== 'splash' && !isSplashRowId(row.id))
+      .map((row) => ({
+        type: row.type,
+        id: row.id,
+        gradeId: row.type === 'leaderboard' ? row.gradeId : undefined,
+        start: row.type === 'grade' ? presoStarts[row.id] : undefined,
+      }));
+    const items = withSplashesBetween(content, { opening: fromStart });
     if (!items.length) return;
     api.presentationStart({ items });
   }
@@ -1829,22 +1830,32 @@ export function App() {
 
       {tab === 'show' && (() => {
         const decks = nightDecks(state, competition);
-        const allRows = orderRunsheetRows(decks, runsheetOrder, extrasFrom(state)).filter((row) =>
-          runsheetRowForComp(row, competition, decks)
+        const allRows = orderRunsheetRows(decks, runsheetOrder, extrasFrom(state)).filter(
+          (row) =>
+            row.type !== 'splash' &&
+            !isSplashRowId(row.id) &&
+            runsheetRowForComp(row, competition, decks)
         );
         const activeRows = allRows.filter((row) => runsheetIncluded(row.id));
         const unusedRows = allRows.filter((row) => !runsheetIncluded(row.id));
         const dragOver = runsheetDrag?.overId;
+        const progressAfter = runsheetProgressAfterIndex(activeRows, state);
+        const renderProgressLine = (status) => (
+          <li key="runsheet-progress" className="runsheet-progress" aria-current="true">
+            <span className="runsheet-progress-line" aria-hidden="true" />
+            <span className="runsheet-progress-label">{status}</span>
+            <span className="runsheet-progress-line" aria-hidden="true" />
+          </li>
+        );
         const renderRow = (row, list, unused) => {
           const info = runsheetRowInfo(row, list, state);
-          const current = !unused && state.presentation.runCurrent === row.id;
           const rowIndex = list.findIndex((item) => item.id === row.id);
           const next = rowIndex >= 0 ? list[rowIndex + 1] : null;
           const hasBoard = !unused && row.type === 'grade' && next?.type === 'leaderboard';
           return (
             <li
               key={row.id}
-              className={`${current ? 'active' : ''}${dragOver === row.id ? ' drop' : ''}${runsheetDrag?.id === row.id ? ' dragging' : ''}${unused ? ' unused-row' : ''}${info.isGrade && !unused ? ' grade-row' : ''}${hasBoard ? ' has-board' : ''}${!unused && row.type === 'leaderboard' ? ' board-row' : ''}${!unused && row.type === 'cue' ? ' cue-row' : ''}`.trim()}
+              className={`${dragOver === row.id ? ' drop' : ''}${runsheetDrag?.id === row.id ? ' dragging' : ''}${unused ? ' unused-row' : ''}${info.isGrade && !unused ? ' grade-row' : ''}${hasBoard ? ' has-board' : ''}${!unused && row.type === 'leaderboard' ? ' board-row' : ''}${!unused && row.type === 'cue' ? ' cue-row' : ''}`.trim()}
               draggable
               onDragStart={(event) => {
                 if (!runsheetDragHandle.current) {
@@ -1927,11 +1938,6 @@ export function App() {
                     Remove
                   </button>
                 )}
-                {row.type === 'splash' && row.id !== RUNSHEET_SPLASH ? (
-                  <button type="button" onClick={() => removeSplash(row.id)}>
-                    Delete
-                  </button>
-                ) : null}
                 {row.type === 'cue' && isEditableCueId(row.id) ? (
                   <button type="button" onClick={() => removeGuestSpeaker(row.id)}>
                     Delete
@@ -1946,8 +1952,19 @@ export function App() {
             </li>
           );
         };
+        const onEndSplash =
+          state.audienceView === 'splash' &&
+          (state.splash?.mode === 'end' ||
+            String(state.presentation?.runCurrent || '') === RUNSHEET_SPLASH_END);
+        const onOpeningSplash = state.audienceView === 'splash' && !onEndSplash;
         const liveStatus =
-          state.audienceView === 'splash'
+          onEndSplash
+            ? `Closing splash · ${
+                (state.splash?.winners?.length || 0) > 0
+                  ? `${state.splash.winners.length} winners`
+                  : 'Thank you'
+              }`
+            : onOpeningSplash
             ? `Opening splash · ${state.splash?.roundName || 'Grand Final'}`
             : state.audienceView === 'leaderboard' && state.scoreboard?.leaderboardScope === 'grade'
               ? `Leaderboard · ${state.scoreboard?.medalTitle || state.scoreboard?.gradeName || 'Grade'}`
@@ -1995,7 +2012,9 @@ export function App() {
           <div className="show-layout">
             <section className="show-night">
               <h3 className="runsheet-heading">On the night</h3>
-              <p className="muted show-note">Each grade is followed by its leaderboard. Next walks this list.</p>
+              <p className="muted show-note">
+                Starts with the opening splash and ends with the closing splash. Each grade is followed by its leaderboard with no splash between; a splash sits between the other items.
+              </p>
               <ul
                 className="show-presos"
                 onDragOver={(event) => {
@@ -2008,8 +2027,18 @@ export function App() {
                   setRunsheetDrag(null);
                 }}
               >
-                {activeRows.length ? activeRows.map((row) => renderRow(row, activeRows, false)) : (
-                  <li className="runsheet-empty">Nothing on the night yet. Restore a row from Unused, or add a splash, guest speaker or award.</li>
+                {activeRows.length ? (
+                  <>
+                    {progressAfter === -1 ? renderProgressLine(liveStatus) : null}
+                    {activeRows.map((row, index) => (
+                      <Fragment key={row.id}>
+                        {renderRow(row, activeRows, false)}
+                        {progressAfter === index ? renderProgressLine(liveStatus) : null}
+                      </Fragment>
+                    ))}
+                  </>
+                ) : (
+                  <li className="runsheet-empty">Nothing on the night yet. Restore a row from Unused, or add a guest speaker or award.</li>
                 )}
               </ul>
             </section>
@@ -2058,10 +2087,16 @@ export function App() {
                     Medal count
                   </button>
                   <button
-                    className={state.audienceView === 'splash' ? 'primary' : ''}
+                    className={onOpeningSplash ? 'primary' : ''}
                     onClick={() => api.showSplash()}
                   >
                     Opening splash
+                  </button>
+                  <button
+                    className={onEndSplash ? 'primary' : ''}
+                    onClick={() => api.showEndSplash()}
+                  >
+                    Closing splash
                   </button>
                   <button
                     className={state.audienceView === 'toty' ? 'primary' : ''}
@@ -2143,9 +2178,6 @@ export function App() {
               }
             >
               Save
-            </button>
-            <button type="button" onClick={addSplash}>
-              Add splash
             </button>
             <button type="button" onClick={addGuestSpeaker}>
               Add guest speaker
@@ -2978,68 +3010,6 @@ function formatPhotoRounds(rounds) {
   return `${list.slice(0, 3).join(' · ')} · +${list.length - 3} more`;
 }
 
-function ImportedPlayerPhotos({ photos }) {
-  const groups = useMemo(() => groupImportedPhotosByClub(photos), [photos]);
-
-  return (
-    <div className="imported-photos-block">
-      <div className="imported-photos-head">
-        <h4>Imported player photos</h4>
-        <button type="button" onClick={() => api.refreshAudiencePhotos()}>
-          Refresh audience photos
-        </button>
-      </div>
-      {groups.length ? (
-        <div className="imported-photos-clubs">
-          {groups.map((group) => (
-            <section key={group.clubKey} className="imported-photos-club">
-              <header className="imported-photos-club-head">
-                <h5>{group.clubName}</h5>
-                <span>
-                  {group.photos.length} photo{group.photos.length === 1 ? '' : 's'}
-                </span>
-              </header>
-              <ul className="imported-photos-grid">
-                {group.photos.map((photo) => (
-                  <li key={photo.id} className="imported-photo-card">
-                    {photo.photoUrl ? <img src={photo.photoUrl} alt="" /> : <i />}
-                    <div className="imported-photo-copy">
-                      <strong>
-                        {photo.number ? `${photo.number}. ` : ''}
-                        {photo.name}
-                      </strong>
-                      <small title={(photo.rounds ?? []).join('\n')}>
-                        {formatPhotoRounds(photo.rounds)}
-                      </small>
-                      <button
-                        type="button"
-                        className="ghost"
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Delete the imported photo for ${photo.name}? The audience will refresh. Sync can bring a MatchDay photo back later.`
-                            )
-                          ) {
-                            api.deleteImportedPlayerPhoto(photo.id);
-                          }
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      ) : (
-        <p className="muted">No PC imports yet. Use Import player photos above.</p>
-      )}
-    </div>
-  );
-}
-
 function AssignPlayerPhoto({ roster }) {
   const [query, setQuery] = useState('');
   const matches = useMemo(() => {
@@ -3056,7 +3026,7 @@ function AssignPlayerPhoto({ roster }) {
     <div className="assign-player-photo">
       <label className="settings-field">
         <strong>Assign a photo to one player</strong>
-        <small>Search a player, then choose any image file — the filename does not need to match.</small>
+        <small>Search anyone, then choose a file — useful if they are not on the need-a-photo list yet.</small>
         <input
           type="text"
           value={query}
@@ -3099,6 +3069,264 @@ function AssignPlayerPhoto({ roster }) {
           {!matches.length ? <li className="muted">No matching players.</li> : null}
         </ul>
       ) : null}
+    </div>
+  );
+}
+
+function addFeaturedReason(map, playerId, reason) {
+  const id = String(playerId || '').trim();
+  if (!id || !reason) return;
+  let set = map.get(id);
+  if (!set) {
+    set = new Set();
+    map.set(id, set);
+  }
+  set.add(reason);
+}
+
+/** Players who need a photo for the night: votes, Team of the year, awards, leading goal kicker. */
+function featuredPlayerReasons(state, grades) {
+  const reasons = new Map();
+
+  for (const grade of grades ?? []) {
+    const label = grade.medalTitle || grade.name || 'Grade';
+    for (const round of grade.rounds ?? []) {
+      for (const game of round.games ?? []) {
+        const votes = game.votes ?? {};
+        for (const key of ['four', 'three', 'two', 'one']) {
+          if (votes[key]) addFeaturedReason(reasons, votes[key], `Votes · ${label}`);
+        }
+      }
+    }
+    for (const row of grade.leaderboard ?? []) {
+      if (!row?.id) continue;
+      if (Number(row.votes) > 0 || Number(row.points) > 0) {
+        addFeaturedReason(reasons, row.id, `Votes · ${label}`);
+      }
+    }
+  }
+
+  for (const player of Object.values(state?.toty?.picks ?? {})) {
+    if (player?.id) addFeaturedReason(reasons, player.id, 'Team of the year');
+  }
+
+  for (const extra of state?.nightExtras ?? []) {
+    if (extra?.kind !== 'award' || !extra.playerId) continue;
+    addFeaturedReason(reasons, extra.playerId, extra.title ? `Award · ${extra.title}` : 'Award');
+  }
+
+  if (state?.leadingGoalkicker?.id) {
+    addFeaturedReason(reasons, state.leadingGoalkicker.id, 'Leading goal kicker');
+  }
+
+  return reasons;
+}
+
+function playersNeedingPhotos(state, grades) {
+  const reasons = featuredPlayerReasons(state, grades);
+  const byId = new Map((state?.roster ?? []).map((player) => [String(player.id), player]));
+  const missing = [];
+  for (const [id, why] of reasons) {
+    const player = byId.get(id);
+    if (!player) continue;
+    if (player.photoUrl || player.photoFile) continue;
+    missing.push({
+      id: player.id,
+      name: player.name || 'Unknown',
+      clubName: player.clubName || 'Unknown club',
+      number: player.number || '',
+      reasons: [...why],
+    });
+  }
+  return missing.sort((a, b) => {
+    const club = String(a.clubName).localeCompare(String(b.clubName));
+    if (club) return club;
+    return String(a.name).localeCompare(String(b.name));
+  });
+}
+
+function groupPlayersByClub(players) {
+  const groups = [];
+  const byClub = new Map();
+  for (const player of players ?? []) {
+    const clubName = String(player.clubName || 'Unknown club').trim() || 'Unknown club';
+    let group = byClub.get(clubName);
+    if (!group) {
+      group = { clubName, players: [] };
+      byClub.set(clubName, group);
+      groups.push(group);
+    }
+    group.players.push(player);
+  }
+  return groups;
+}
+
+function PlayerPhotosPanel({ state, grades }) {
+  const [section, setSection] = useState('need');
+  const [query, setQuery] = useState('');
+  const [busyId, setBusyId] = useState(null);
+  const missing = useMemo(() => playersNeedingPhotos(state, grades), [state, grades]);
+  const imported = state?.importedPhotos ?? [];
+  const importedGroups = useMemo(() => groupImportedPhotosByClub(imported), [imported]);
+  const filteredMissing = useMemo(() => {
+    const hay = query.trim().toLowerCase();
+    if (!hay) return missing;
+    return missing.filter((player) =>
+      `${player.name} ${player.number} ${player.clubName} ${(player.reasons ?? []).join(' ')}`
+        .toLowerCase()
+        .includes(hay)
+    );
+  }, [missing, query]);
+  const missingGroups = useMemo(() => groupPlayersByClub(filteredMissing), [filteredMissing]);
+
+  async function addPhoto(player) {
+    if (busyId) return;
+    setBusyId(player.id);
+    try {
+      const result = await api.importPlayerPhotoForPlayer(player.id);
+      if (result?.canceled) return;
+      if (result?.error || result?.ok === false) {
+        window.alert(result?.error || 'Could not import that photo.');
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="player-photos-panel">
+      <div className="player-photos-panel-head">
+        <div>
+          <h4>Player photos</h4>
+          <p className="muted">
+            Need a photo covers votes, Team of the year, awards and the leading goal kicker. Imported lists PC cutouts.
+          </p>
+        </div>
+        <div className="player-photos-tabs">
+          <button
+            type="button"
+            className={section === 'need' ? 'primary' : ''}
+            onClick={() => setSection('need')}
+          >
+            Need a photo{missing.length ? ` · ${missing.length}` : ''}
+          </button>
+          <button
+            type="button"
+            className={section === 'imported' ? 'primary' : ''}
+            onClick={() => setSection('imported')}
+          >
+            Imported{imported.length ? ` · ${imported.length}` : ''}
+          </button>
+          <button type="button" onClick={() => api.refreshAudiencePhotos()}>
+            Refresh audience
+          </button>
+        </div>
+      </div>
+
+      {section === 'need' ? (
+        <div className="player-photos-need">
+          {missing.length ? (
+            <label className="settings-field missing-player-photos-search">
+              <span className="sr-only">Filter players without photos</span>
+              <input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Filter by name, club or reason"
+                autoComplete="off"
+              />
+            </label>
+          ) : null}
+          {missingGroups.length ? (
+            <div className="missing-player-photos-clubs">
+              {missingGroups.map((group) => (
+                <section key={group.clubName} className="missing-player-photos-club">
+                  <header className="missing-player-photos-club-head">
+                    <h5>{group.clubName}</h5>
+                    <span>
+                      {group.players.length} player{group.players.length === 1 ? '' : 's'}
+                    </span>
+                  </header>
+                  <ul className="missing-player-photos-list">
+                    {group.players.map((player) => (
+                      <li key={player.id}>
+                        <div>
+                          <strong>
+                            {player.number ? `${player.number}. ` : ''}
+                            {player.name}
+                          </strong>
+                          <small>{(player.reasons ?? []).join(' · ')}</small>
+                        </div>
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={Boolean(busyId)}
+                          onClick={() => addPhoto(player)}
+                        >
+                          {busyId === player.id ? 'Cutting…' : 'Add photo'}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">
+              {missing.length
+                ? 'No players match that filter.'
+                : 'Everyone with votes, Team of the year, an award or leading goal kicker already has a photo.'}
+            </p>
+          )}
+          <AssignPlayerPhoto roster={state.roster} />
+        </div>
+      ) : importedGroups.length ? (
+        <div className="imported-photos-clubs">
+          {importedGroups.map((group) => (
+            <section key={group.clubKey} className="imported-photos-club">
+              <header className="imported-photos-club-head">
+                <h5>{group.clubName}</h5>
+                <span>
+                  {group.photos.length} photo{group.photos.length === 1 ? '' : 's'}
+                </span>
+              </header>
+              <ul className="imported-photos-grid">
+                {group.photos.map((photo) => (
+                  <li key={photo.id} className="imported-photo-card">
+                    {photo.photoUrl ? <img src={photo.photoUrl} alt="" /> : <i />}
+                    <div className="imported-photo-copy">
+                      <strong>
+                        {photo.number ? `${photo.number}. ` : ''}
+                        {photo.name}
+                      </strong>
+                      <small title={(photo.rounds ?? []).join('\n')}>
+                        {formatPhotoRounds(photo.rounds)}
+                      </small>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Delete the imported photo for ${photo.name}? The audience will refresh. Sync can bring a MatchDay photo back later.`
+                            )
+                          ) {
+                            api.deleteImportedPlayerPhoto(photo.id);
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">No PC imports yet. Use Import photo files above, or Add photo on the Need a photo tab.</p>
+      )}
     </div>
   );
 }
@@ -3196,6 +3424,8 @@ function SettingsPanel({ state, grade, grades }) {
                   ? 'Audience is on Team of the year. Next/Back reveals one player at a time, then the field.'
                   : state.audienceView === 'lifemembers'
                     ? 'Audience is on life members. Next/Back goes title, then one recipient at a time.'
+                    : state.audienceView === 'splash' && state.splash?.mode === 'end'
+                      ? 'Audience is on the closing splash.'
                     : state.audienceView === 'splash'
                       ? 'Audience is on the opening splash. Next starts the medal count.'
                     : state.audienceView === 'crowd'
@@ -3213,10 +3443,20 @@ function SettingsPanel({ state, grade, grades }) {
               Medal count
             </button>
             <button
-              className={state.audienceView === 'splash' ? 'primary' : ''}
+              className={
+                state.audienceView === 'splash' && state.splash?.mode !== 'end' ? 'primary' : ''
+              }
               onClick={() => api.showSplash()}
             >
               Opening splash
+            </button>
+            <button
+              className={
+                state.audienceView === 'splash' && state.splash?.mode === 'end' ? 'primary' : ''
+              }
+              onClick={() => api.showEndSplash()}
+            >
+              Closing splash
             </button>
             <button
               className={state.audienceView === 'toty' ? 'primary' : ''}
@@ -3709,8 +3949,7 @@ function SettingsPanel({ state, grade, grades }) {
               : ''}
             .
           </p>
-          <AssignPlayerPhoto roster={state.roster} />
-          <ImportedPlayerPhotos photos={state.importedPhotos} />
+          <PlayerPhotosPanel state={state} grades={grades} />
           <div className="row">
             <button
               onClick={() => {
@@ -3774,11 +4013,11 @@ function SettingsPanel({ state, grade, grades }) {
             </div>
             <div>
               <span className="hotkey-keys"><kbd>Esc</kbd></span>
-              <span>Back to medal count from the leaderboard, live vote count, opening splash, team of the year, life members, or crowd photos.</span>
+              <span>Back to medal count from the leaderboard, live vote count, opening or closing splash, team of the year, life members, or crowd photos.</span>
             </div>
             <div>
               <span className="hotkey-keys"><kbd>←</kbd> <kbd>→</kbd></span>
-              <span>Previous / next slide on medal count, opening splash, Team of the year, or life members.</span>
+              <span>Previous / next slide on medal count, opening or closing splash, Team of the year, or life members.</span>
             </div>
             <div>
               <span className="hotkey-keys"><kbd>Enter</kbd></span>

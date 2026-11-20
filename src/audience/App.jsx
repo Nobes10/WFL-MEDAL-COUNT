@@ -450,14 +450,89 @@ function GoalkickerBoard({ state, title, board }) {
   );
 }
 
+const SPLASH_WINNER_VISIBLE = 3;
+const SPLASH_WINNER_HOLD_MS = 3200;
+
+function SplashWinnerTile({ winner }) {
+  const theme = clubTheme(winner.themeClubName || winner.clubName, winner);
+  return (
+    <article
+      className={`splash-winner ${theme.wfl ? 'wfl-wash' : theme.dark ? 'dark-wash' : 'light-wash'}`}
+      style={{ backgroundColor: theme.primary, '--club-primary': theme.primary }}
+    >
+      <div className="splash-winner-bg">
+        {winner.logoUrl ? <NormalizedLogo className="club-watermark" src={winner.logoUrl} pad={0.02} /> : null}
+      </div>
+      <b className="splash-winner-award">{winner.award}</b>
+      <div className="splash-winner-body">
+        <div className="splash-winner-photo">
+          {winner.photoUrl ? <img src={winner.photoUrl} alt="" /> : <i />}
+        </div>
+        <div className="splash-winner-id">
+          <strong>{winner.name}</strong>
+          <small>
+            {[winner.detail, winner.clubName, winner.score].filter(Boolean).join(' · ') || '—'}
+          </small>
+        </div>
+        {winner.logoUrl ? <NormalizedLogo className="splash-winner-crest" src={winner.logoUrl} pad={0.04} /> : null}
+      </div>
+    </article>
+  );
+}
+
+function SplashWinnersCarousel({ winners }) {
+  const list = winners ?? [];
+  const visible = Math.min(SPLASH_WINNER_VISIBLE, Math.max(list.length, 1));
+  const [index, setIndex] = useState(0);
+  const reduceMotion =
+    typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+  const winnersKey = list.map((row) => row.id).join('|');
+
+  useEffect(() => {
+    setIndex(0);
+  }, [winnersKey]);
+
+  useEffect(() => {
+    if (reduceMotion || list.length <= visible) return undefined;
+    const timer = window.setInterval(() => {
+      setIndex((current) => (current + 1) % list.length);
+    }, SPLASH_WINNER_HOLD_MS);
+    return () => window.clearInterval(timer);
+  }, [list.length, visible, reduceMotion, winnersKey]);
+
+  if (!list.length) {
+    return <p className="splash-empty">Award winners appear once votes and awards are entered</p>;
+  }
+
+  const shown =
+    list.length <= visible
+      ? list
+      : Array.from({ length: visible }, (_, offset) => list[(index + offset) % list.length]);
+
+  return (
+    <div
+      className={`splash-winners${shown.length === 1 ? ' solo' : ''}${list.length > visible ? ' is-rotating' : ''}`}
+      style={{ '--winner-n': shown.length }}
+      key={list.length <= visible ? 'static' : `spin-${index}`}
+    >
+      {shown.map((winner, offset) => (
+        <SplashWinnerTile key={`${winner.id}-${offset}-${index}`} winner={winner} />
+      ))}
+    </div>
+  );
+}
+
 function SplashStage({ state }) {
   const splash = state.splash ?? {};
   const settings = state.settings ?? {};
   const teams = splash.teams ?? [];
   const fixtures = splash.fixtures ?? [];
+  const winners = splash.winners ?? [];
   const wwfl = splash.competition === 'wwfl';
+  const end = splash.mode === 'end';
   return (
-    <div className={`stage type-splash${wwfl ? ' wwfl' : ''}`}>
+    <div className={`stage type-splash${wwfl ? ' wwfl' : ''}${end ? ' splash-end' : ''}`}>
       <div className="splash-hero">
         {settings.showWflLogo !== false && state?.wflLogoUrl ? (
           <img className="splash-wfl" src={state.wflLogoUrl} alt={wwfl ? 'WWFL' : 'WFL'} />
@@ -469,11 +544,16 @@ function SplashStage({ state }) {
                 (wwfl ? "Whyalla Women's Football League" : settings.leagueName || 'Whyalla Football League')}
             </p>
           ) : null}
-          <h1>{splash.title || (wwfl ? 'WWFL Medal Count' : 'WFL Medal Count')}</h1>
+          <h1>
+            {splash.title ||
+              (end ? 'Thank you' : wwfl ? 'WWFL Medal Count' : 'WFL Medal Count')}
+          </h1>
           {settings.showSeasonYear !== false ? <h2>{splash.season || state.season}</h2> : null}
         </div>
       </div>
-      {teams.length ? (
+      {end ? (
+        <SplashWinnersCarousel winners={winners} />
+      ) : teams.length ? (
         <div className="splash-teams" style={{ '--splash-n': Math.max(teams.length, 1) }}>
           {teams.map((team) => (
             <SplashCrest key={team.id || team.name} team={team} />
@@ -482,8 +562,10 @@ function SplashStage({ state }) {
       ) : (
         <p className="splash-empty">Club logos appear after a season sync</p>
       )}
-      <p className="splash-day">{splash.roundName || 'Grand Final'}</p>
-      {fixtures.length ? (
+      <p className="splash-day">
+        {splash.roundName || (end ? "Tonight's winners" : 'Grand Final')}
+      </p>
+      {!end && fixtures.length ? (
         <ul
           className={`splash-fixtures${fixtures.length === 1 ? ' solo' : ''}`}
           style={{ '--gf-n': Math.max(fixtures.length, 1) }}

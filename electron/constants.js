@@ -1057,6 +1057,7 @@ export function homeAndAwayRoundNumber(name) {
 }
 
 export const RUNSHEET_SPLASH = 'splash';
+export const RUNSHEET_SPLASH_END = 'splash-end';
 export const RUNSHEET_TOTY = 'toty';
 export const RUNSHEET_LIFE = 'lifemembers';
 
@@ -1141,6 +1142,10 @@ export function clampCueStep(step) {
 export function isSplashRunsheetId(id) {
   const key = String(id || '');
   return key === RUNSHEET_SPLASH || key.startsWith(`${RUNSHEET_SPLASH}-`);
+}
+
+export function isEndSplashRunsheetId(id) {
+  return String(id || '') === RUNSHEET_SPLASH_END;
 }
 
 export function leaderboardGradeId(raw) {

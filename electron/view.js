@@ -51,6 +51,9 @@ import {
   WFL_MEMBER_CLUB_NAME,
   WFL_LOGO_FILE,
   displayLeagueClubName,
+  RUNSHEET_SPLASH_END,
+  isEndSplashRunsheetId,
+  gradeProfile,
 } from './constants.js';
 import { mediaUrl } from './store.js';
 import { crowdViewFromSettings } from './crowdPhotos.js';
@@ -388,55 +391,165 @@ function splashGradesWithFinals(store, grades) {
   });
 }
 
-function splashView(store, grades, clubs, settings, logosDir) {
+function splashModeOf(store, queueItem) {
+  if (isEndSplashRunsheetId(queueItem?.id)) return 'end';
+  if (store.audienceView === 'splash' && store.splashMode === 'end') return 'end';
+  return 'opening';
+}
+
+function splashWinnerRow(kind, award, person, { id, detail = '', score = '' } = {}) {
+  if (!person?.name) return null;
+  return {
+    id: id || `${kind}-${person.id || person.name}`,
+    kind,
+    award,
+    detail,
+    score,
+    name: person.name,
+    clubName: presentClubName(person.clubName || ''),
+    photoUrl: person.photoUrl || null,
+    photoImported: Boolean(person.photoImported),
+    logoUrl: person.logoUrl || null,
+    themeClubName: presentClubName(person.themeClubName || person.clubName || ''),
+  };
+}
+
+function splashWinnerRank(row, gradeByMedalId) {
+  const award = String(row?.award || '');
+  if (row?.kind === 'medal') {
+    const grade = gradeByMedalId.get(String(row.id || ''));
+    const profile = gradeProfile(grade?.sourceName || grade?.name, grade?.id);
+    // Scott Leverington (WWFL) / Jim Hewitson (WFL) lead the loop, then goalkicker.
+    if (/leverington/i.test(award)) return 0;
+    if (/hewitson/i.test(award) || profile?.label === 'League') return 0;
+    return 10 + (99 - (profile?.tabOrder ?? 0));
+  }
+  if (row?.kind === 'goalkicker') return 1;
+  if (row?.kind === 'award') return 50;
+  if (row?.kind === 'toty') return 100 + (Number(row.order) || 0);
+  return 80;
+}
+
+function splashWinnersView(store, grades, clubs, settings, paths, roster, women = false) {
+  const medals = [];
+  const gradeByMedalId = new Map();
+  for (const grade of sortGrades(grades ?? [])) {
+    const gradeClubs = clubsForGrade(clubs, grade);
+    const board = tallyGrade(grade, gradeClubs, null, settings);
+    const top = board[0];
+    if (!top || !(Number(top.votes) > 0)) continue;
+    const [person] = boardView([top], paths);
+    const id = `medal-${grade.id}`;
+    gradeByMedalId.set(id, grade);
+    const row = splashWinnerRow('medal', overlayMedalTitle(grade, settings), person, {
+      id,
+      detail: overlayGradeName(grade, settings),
+      score: `${person.votes} ${person.votes === 1 ? 'vote' : 'votes'}`,
+    });
+    if (row) medals.push(row);
+  }
+
+  const winners = [...medals];
+
+  const goalkicker = leadingGoalkickerView(grades, clubs, settings, women);
+  if (goalkicker?.name && Number(goalkicker.goals) > 0) {
+    const row = splashWinnerRow('goalkicker', 'Leading Goal Kicker', goalkicker, {
+      id: 'goalkicker',
+      score: `${goalkicker.goals} ${goalkicker.goals === 1 ? 'goal' : 'goals'}`,
+    });
+    if (row) winners.push(row);
+  }
+
+  const extras = normalizeNightExtras(store.nightExtras).filter((item) => isAwardCue(item));
+  extras.forEach((meta, index) => {
+    const person = awardWinnerFrom(meta, roster, store.grades ?? grades, clubs, women);
+    if (!person?.name) return;
+    const row = splashWinnerRow('award', meta.title || 'Award', person, {
+      id: meta.id || `award-${index}`,
+      detail: meta.detail && meta.detail !== person.name ? meta.detail : '',
+    });
+    if (row) winners.push(row);
+  });
+
+  const toty = totyView(store, roster, grades);
+  const positions = totyPositions(toty.benchCount);
+  positions.forEach((pos, index) => {
+    const player = toty.picks?.[pos.id];
+    if (!player?.name) return;
+    const captain = player.totyCaptain?.label || player.totyCaptain?.short || '';
+    const row = splashWinnerRow('toty', 'Team of the Year', player, {
+      id: `toty-${pos.id}`,
+      detail: pos.name || pos.label,
+      score: captain || pos.label,
+    });
+    if (row) winners.push({ ...row, order: index });
+  });
+
+  winners.sort((a, b) => splashWinnerRank(a, gradeByMedalId) - splashWinnerRank(b, gradeByMedalId));
+  return winners;
+}
+
+function splashView(store, grades, clubs, settings, paths, queueItem, roster = [], women = false) {
+  const logosDir = paths.logos;
   const wwfl = store.competition === 'wwfl';
+  const mode = splashModeOf(store, queueItem);
+  const end = mode === 'end';
   const splashGrades = splashGradesWithFinals(store, grades).filter((grade) =>
     wwfl ? isWomenGrade(grade) : !isWomenGrade(grade)
   );
   const teams = wwfl ? splashWomenClubs(splashGrades, clubs, logosDir) : splashLeagueClubs(clubs, logosDir);
-  let fixtures = collectGrandFinalFixtures(splashGrades)
-    .filter((game) => isNamedSplashTeam(game.homeName) && isNamedSplashTeam(game.awayName))
-    .map((game) => {
-      const grade = (splashGrades ?? []).find((item) => String(item.id) === String(game.gradeId));
-      const home = resolveSplashClub(clubs, game.homeId, game.homeName);
-      const away = resolveSplashClub(clubs, game.awayId, game.awayName);
-      return {
-        ...game,
-        gradeName: overlayGradeName(grade || { name: game.gradeName }, settings),
-        homeName: displayClubName(home?.name || game.homeName),
-        awayName: displayClubName(away?.name || game.awayName),
-        venueName: game.venueName || '',
-        homeLogoUrl: mediaUrl('logos', logoFileForClub(home, clubs, { women: wwfl })),
-        awayLogoUrl: mediaUrl('logos', logoFileForClub(away, clubs, { women: wwfl })),
-      };
-    });
-  if (settings.placeholderGrandFinal && fixtures.length === 0) {
-    const [home, away] = pickTwoSplashTeams(teams, `${store.competition}:${store.season}`);
-    if (home && away) {
-      const grade = splashGrades[0];
-      fixtures = [
-        {
-          id: 'placeholder-gf',
-          gradeName: overlayGradeName(grade || { name: 'League' }, settings),
-          homeName: home.name,
-          awayName: away.name,
-          homeLogoUrl: home.logoUrl,
-          awayLogoUrl: away.logoUrl,
-          roundName: 'Grand Final',
-        },
-      ];
+  let fixtures = [];
+  if (!end) {
+    fixtures = collectGrandFinalFixtures(splashGrades)
+      .filter((game) => isNamedSplashTeam(game.homeName) && isNamedSplashTeam(game.awayName))
+      .map((game) => {
+        const grade = (splashGrades ?? []).find((item) => String(item.id) === String(game.gradeId));
+        const home = resolveSplashClub(clubs, game.homeId, game.homeName);
+        const away = resolveSplashClub(clubs, game.awayId, game.awayName);
+        return {
+          ...game,
+          gradeName: overlayGradeName(grade || { name: game.gradeName }, settings),
+          homeName: displayClubName(home?.name || game.homeName),
+          awayName: displayClubName(away?.name || game.awayName),
+          venueName: game.venueName || '',
+          homeLogoUrl: mediaUrl('logos', logoFileForClub(home, clubs, { women: wwfl })),
+          awayLogoUrl: mediaUrl('logos', logoFileForClub(away, clubs, { women: wwfl })),
+        };
+      });
+    if (settings.placeholderGrandFinal && fixtures.length === 0) {
+      const [home, away] = pickTwoSplashTeams(teams, `${store.competition}:${store.season}`);
+      if (home && away) {
+        const grade = splashGrades[0];
+        fixtures = [
+          {
+            id: 'placeholder-gf',
+            gradeName: overlayGradeName(grade || { name: 'League' }, settings),
+            homeName: home.name,
+            awayName: away.name,
+            homeLogoUrl: home.logoUrl,
+            awayLogoUrl: away.logoUrl,
+            roundName: 'Grand Final',
+          },
+        ];
+      }
     }
   }
   return {
+    mode,
     season: store.season,
     competition: wwfl ? 'wwfl' : 'wfl',
     leagueName: wwfl
       ? "Whyalla Women's Football League"
       : settings.leagueName || 'Whyalla Football League',
-    title: wwfl ? 'WWFL Medal Count' : 'WFL Medal Count',
-    roundName: 'Grand Final',
+    title: end
+      ? 'Thank you'
+      : wwfl
+        ? 'WWFL Medal Count'
+        : 'WFL Medal Count',
+    roundName: end ? "Tonight's winners" : 'Grand Final',
     fixtures,
     teams,
+    winners: end ? splashWinnersView(store, grades, clubs, settings, paths, roster, women) : [],
   };
 }
 
@@ -674,7 +787,9 @@ export function applyPresentationCursor(full, store) {
   const runCurrent =
     runsheetIdForQueueItem(queueItem, slides[slideIndex]?.gradeId) ||
     (audienceView === 'splash'
-      ? 'splash'
+      ? store.splashMode === 'end' || isEndSplashRunsheetId(queueItem?.id)
+        ? RUNSHEET_SPLASH_END
+        : 'splash'
       : audienceView === 'cue'
         ? store.cueKey || queueItem?.id || 'cue'
         : audienceView === 'toty'
@@ -1156,7 +1271,9 @@ export function decorateState(store, paths) {
           slides[slideIndex]?.gradeId
         ) ||
         (store.audienceView === 'splash'
-          ? 'splash'
+          ? store.splashMode === 'end'
+            ? RUNSHEET_SPLASH_END
+            : 'splash'
           : store.audienceView === 'cue'
             ? store.cueKey || queueItem?.id || 'cue'
             : store.audienceView === 'toty'
@@ -1175,7 +1292,7 @@ export function decorateState(store, paths) {
     importedPhotos,
     toty: totyView(store, roster, grades),
     lifeMembers: lifeMembersView(store, roster, clubs),
-    splash: splashView(store, grades, clubs, settings, paths.logos),
+    splash: splashView(store, grades, clubs, settings, paths, queueItem, roster, womenComp),
     cue: cueView(store, grades, clubs, settings, womenComp, roster),
     nightExtras: normalizeNightExtras(store.nightExtras),
     leadingGoalkickerBoard: leadingGoalkickerBoardView(grades, clubs, settings, womenComp),
