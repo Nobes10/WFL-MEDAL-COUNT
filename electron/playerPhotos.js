@@ -96,22 +96,38 @@ export function hasWebsitePlayerPhoto(paths, playerId) {
   return existsSync(join(paths.photos, `${id}.webp`)) && !isLocalPlayerPhoto(paths, id);
 }
 
+const photoResolveCache = new Map();
+let importedPhotosCache = { key: '', list: null };
+
+/** Drop cached photo lookups after imports/deletes or media revision bumps. */
+export function clearPlayerPhotoCaches() {
+  photoResolveCache.clear();
+  importedPhotosCache = { key: '', list: null };
+}
+
 /** Prefer MatchDay/website `.webp` over a PC import whenever both could apply. */
 export function resolvePlayerPhoto(paths, playerId, fallbackFile = null) {
   const id = String(playerId || '');
   if (!id || !paths?.photos) {
     return { photoFile: fallbackFile || null, photoImported: false };
   }
+  const fallback = fallbackFile ? String(fallbackFile) : '';
+  const cacheKey = `${id}\0${fallback}\0${paths.photos}`;
+  const cached = photoResolveCache.get(cacheKey);
+  if (cached) return cached;
   const imported = isLocalPlayerPhoto(paths, id);
+  let result;
   if (!imported && existsSync(join(paths.photos, `${id}.webp`))) {
-    return { photoFile: `${id}.webp`, photoImported: false };
+    result = { photoFile: `${id}.webp`, photoImported: false };
+  } else {
+    const existing = findExistingPlayerPhoto(paths, id);
+    if (existing) result = { photoFile: existing, photoImported: imported };
+    else if (fallback && existsSync(join(paths.photos, fallback))) {
+      result = { photoFile: fallback, photoImported: imported };
+    } else result = { photoFile: null, photoImported: false };
   }
-  const existing = findExistingPlayerPhoto(paths, id);
-  if (existing) return { photoFile: existing, photoImported: imported };
-  if (fallbackFile && existsSync(join(paths.photos, String(fallbackFile)))) {
-    return { photoFile: String(fallbackFile), photoImported: imported };
-  }
-  return { photoFile: null, photoImported: false };
+  photoResolveCache.set(cacheKey, result);
+  return result;
 }
 
 function collectPlayers(store) {
@@ -268,11 +284,20 @@ function collectImportedPhotoMeta(store) {
 
 export function listImportedPlayerPhotos(store, paths) {
   if (!paths?.photos || !existsSync(paths.photos)) return [];
+  let names;
+  try {
+    names = readdirSync(paths.photos);
+  } catch {
+    return [];
+  }
+  const localIds = names.filter((name) => name.endsWith('.local')).map((name) => name.slice(0, -'.local'.length));
+  const cacheKey = `${paths.photos}\0${localIds.join(',')}`;
+  if (importedPhotosCache.key === cacheKey && importedPhotosCache.list) {
+    return importedPhotosCache.list;
+  }
   const metaById = collectImportedPhotoMeta(store);
   const list = [];
-  for (const name of readdirSync(paths.photos)) {
-    if (!name.endsWith('.local')) continue;
-    const id = name.slice(0, -'.local'.length);
+  for (const id of localIds) {
     if (!id) continue;
     const photoFile = findExistingPlayerPhoto(paths, id);
     if (!photoFile) continue;
@@ -289,11 +314,13 @@ export function listImportedPlayerPhotos(store, paths) {
       photoFile,
     });
   }
-  return list.sort((a, b) => {
+  list.sort((a, b) => {
     const club = String(a.clubName).localeCompare(String(b.clubName), undefined, { sensitivity: 'base' });
     if (club) return club;
     return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
   });
+  importedPhotosCache = { key: cacheKey, list };
+  return list;
 }
 
 export function deleteImportedPlayerPhoto(store, paths, playerId) {

@@ -8,7 +8,7 @@ import {
 } from '../../electron/constants.js';
 import './toty-pitch.css';
 
-const BOX_STRETCH = 1.1;
+const BOX_STRETCH = 1.02;
 
 function shrinkToBox(node, box, minPx) {
   if (!node || !box) return;
@@ -312,6 +312,7 @@ export function TotyPitch({
     presenting && revealStep > 0 ? new Set(revealLines[revealStep - 1]?.spots ?? []) : null;
   const showSpot = (id) => !revealed || revealed.has(id);
   const showSection = (spots) => !revealed || spots.some((pos) => revealed.has(pos.id));
+  const showFollowers = showSection(TOTY_FOLLOWER_SPOTS);
   const canEditBench = Boolean(onPick && (onAddBench || onRemoveBench));
 
   useLayoutEffect(() => {
@@ -350,8 +351,8 @@ export function TotyPitch({
 
   return (
     <div className="toty-pitch" ref={pitchRef}>
-      <div className="afl-field-wrap">
-        {showSection(TOTY_FOLLOWER_SPOTS) ? (
+      <div className={`afl-field-wrap${showFollowers ? ' has-followers' : ''}${children ? ' has-sponsor' : ''}`}>
+        {showFollowers ? (
           <section className="toty-followers-tl">
             <h3>Ruck & rovers</h3>
             {TOTY_FOLLOWER_SPOTS.filter((pos) => showSpot(pos.id)).map((pos) => (
@@ -365,18 +366,21 @@ export function TotyPitch({
             ))}
           </section>
         ) : null}
-        <div className="afl-field">
-          <FieldMarkings />
-          {TOTY_FIELD_SPOTS.filter((pos) => showSpot(pos.id)).map((pos) => (
-            <FieldSpot
-              key={pos.id}
-              pos={pos}
-              player={picks[pos.id]}
-              onPick={onPick}
-              justIn={Boolean(currentSpots?.has(pos.id))}
-            />
-          ))}
+        <div className="afl-field-stage">
+          <div className="afl-field">
+            <FieldMarkings />
+            {TOTY_FIELD_SPOTS.filter((pos) => showSpot(pos.id)).map((pos) => (
+              <FieldSpot
+                key={pos.id}
+                pos={pos}
+                player={picks[pos.id]}
+                onPick={onPick}
+                justIn={Boolean(currentSpots?.has(pos.id))}
+              />
+            ))}
+          </div>
         </div>
+        {children ? <div className="toty-field-sponsor">{children}</div> : null}
       </div>
       <aside className="toty-side">
         {showSection(benchSpots) || (canEditBench && !presenting) ? (
@@ -404,7 +408,6 @@ export function TotyPitch({
             ) : null}
           </section>
         ) : null}
-        {children}
       </aside>
     </div>
   );

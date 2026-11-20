@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, lazy, startTransition, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   UMPIRE_PAY_BANDS,
@@ -1076,24 +1076,26 @@ export function App() {
   }, [announcerOpen]);
 
   useEffect(() => {
-    api.getState().then(setState);
-    const offState = api.onState(setState);
+    api.getState().then((next) => startTransition(() => setState(next)));
+    const offState = api.onState((next) => startTransition(() => setState(next)));
     const offCursor = api.onStateCursor?.((patch) => {
-      setState((current) => {
-        if (!current || !patch) return current;
-        return {
-          ...current,
-          audienceView: patch.audienceView ?? current.audienceView,
-          presentation: patch.presentation
-            ? { ...current.presentation, ...patch.presentation }
-            : current.presentation,
-          toty: patch.toty ? { ...current.toty, ...patch.toty } : current.toty,
-          cue: patch.cue ? { ...current.cue, ...patch.cue } : current.cue,
-          lifeMembers: patch.lifeMembers
-            ? { ...current.lifeMembers, ...patch.lifeMembers }
-            : current.lifeMembers,
-          scoreboard: patch.scoreboard ? { ...current.scoreboard, ...patch.scoreboard } : current.scoreboard,
-        };
+      startTransition(() => {
+        setState((current) => {
+          if (!current || !patch) return current;
+          return {
+            ...current,
+            audienceView: patch.audienceView ?? current.audienceView,
+            presentation: patch.presentation
+              ? { ...current.presentation, ...patch.presentation }
+              : current.presentation,
+            toty: patch.toty ? { ...current.toty, ...patch.toty } : current.toty,
+            cue: patch.cue ? { ...current.cue, ...patch.cue } : current.cue,
+            lifeMembers: patch.lifeMembers
+              ? { ...current.lifeMembers, ...patch.lifeMembers }
+              : current.lifeMembers,
+            scoreboard: patch.scoreboard ? { ...current.scoreboard, ...patch.scoreboard } : current.scoreboard,
+          };
+        });
       });
     });
     return () => {

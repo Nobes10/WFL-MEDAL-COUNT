@@ -16,7 +16,7 @@ import { printDocument } from './print.js';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { applyPlayerVote, createEmptyStore, emptyTotyPicks, emptyVotes, isForfeitGame, mergeSettings, uniqueVotes, leagueGradeFrom, totyGradeFrom, clampTotyStep, clampLifeMemberStep, clampCueStep, GOALKICKER_LAST_STEP, AWARD_LAST_STEP, normalizeLifeMembers, normalizeNightExtra, normalizeNightExtras, normalizeToty, normalizeTotyCaptains, setTotyCaptainAssignment, lifeMemberBeats, buildPresentationQueue, normalizePresentationQueue, logoFileForClub, isWflMemberClub, WFL_MEMBER_CLUB_ID, WFL_MEMBER_CLUB_NAME, WFL_LOGO_FILE, normalizeCompetition, gradesForCompetition, isGoalkickerCue, isAwardCue, voteScaleForGrade, voteKeyForPoints, LEAGUE_CLUB_NAMES, canonicalClubKey, displayLeagueClubName, buildTotyBeats, clampTotyBenchCount, isTotyPositionId, removeTotyBenchSlot, resizeTotyBenchPicks, totyPositions, TOTY_DEFAULT_BENCH_COUNT, TOTY_MAX_BENCH_COUNT, isEndSplashRunsheetId } from './constants.js';
 import { playerName } from './tally.js';
-import { bumpMediaRevision, ensureStoreDirs, installClubLogoOverrides, loadStore, saveStore, storePaths } from './store.js';
+import { bumpMediaRevision as bumpMediaRevisionRaw, ensureStoreDirs, installClubLogoOverrides, loadStore, saveStore, storePaths } from './store.js';
 import { syncSeason, refreshFixtureScores, ensureWebsiteClubLogos, applyClubLogoFiles } from './sync.js';
 import { applyPresentationCursor, audienceFromState, decorateState } from './view.js';
 import { broadcastObs, startObsServer } from './obs.js';
@@ -36,6 +36,7 @@ import {
   setCustomArtFromPath,
 } from './crowdPhotos.js';
 import {
+  clearPlayerPhotoCaches,
   deleteImportedPlayerPhoto,
   findExistingPlayerPhoto,
   importPlayerPhotoFiles,
@@ -43,6 +44,11 @@ import {
   importPlayerPhotosFromFolder,
   recutLocalPlayerPhotos,
 } from './playerPhotos.js';
+
+function bumpMediaRevision() {
+  clearPlayerPhotoCaches();
+  return bumpMediaRevisionRaw();
+}
 import {
   applySpecialtyRoundOverrides,
   formatSpecialtyName,
@@ -179,7 +185,7 @@ function applyAudienceWindowSettings() {
   if (!audienceWindow || audienceWindow.isDestroyed()) return;
   const settings = currentSettings();
   audienceWindow.setAlwaysOnTop(Boolean(settings.audienceAlwaysOnTop));
-  audienceWindow.setFullScreen(settings.audienceFullscreen !== false);
+  placeAudienceWindow(audienceDisplay());
 }
 
 function crowdClubNames() {
@@ -328,7 +334,7 @@ function presentationCursorPatch(full) {
   };
 }
 
-function emitState({ cheap = false } = {}) {
+function emitStateNow({ cheap = false } = {}) {
   if (!cheap || !decoratedCache) {
     decoratedCache = decorateState(store, paths);
   }
@@ -345,6 +351,31 @@ function emitState({ cheap = false } = {}) {
   const control = withWindowState(full);
   mainWindow?.webContents.send('state-update', control);
   return control;
+}
+
+let emitFlushTimer = null;
+let emitFlushCheap = true;
+
+/** Batch rapid emits (vote clicks) onto the next frame so the UI stays snappy. */
+function emitState({ cheap = false, immediate = false } = {}) {
+  if (immediate) {
+    if (emitFlushTimer) {
+      clearTimeout(emitFlushTimer);
+      emitFlushTimer = null;
+      emitFlushCheap = true;
+    }
+    return emitStateNow({ cheap });
+  }
+  emitFlushCheap = emitFlushCheap && cheap;
+  if (!emitFlushTimer) {
+    emitFlushTimer = setTimeout(() => {
+      emitFlushTimer = null;
+      const nextCheap = emitFlushCheap;
+      emitFlushCheap = true;
+      emitStateNow({ cheap: nextCheap });
+    }, 16);
+  }
+  return null;
 }
 
 function stopFunnelRetry() {
@@ -563,26 +594,70 @@ function createMainWindow() {
   });
 }
 
+function displayArea(display) {
+  const b = display?.bounds ?? { width: 0, height: 0 };
+  return Math.max(0, Number(b.width) || 0) * Math.max(0, Number(b.height) || 0);
+}
+
 function audienceDisplay() {
   const displays = screen.getAllDisplays();
-  const current = screen.getDisplayMatching(mainWindow?.getBounds() ?? { x: 0, y: 0, width: 1, height: 1 });
-  return displays.find((display) => display.id !== current.id) ?? current;
+  if (!displays.length) return screen.getPrimaryDisplay();
+  const current = screen.getDisplayMatching(
+    mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow.getBounds()
+      : { x: 0, y: 0, width: 1, height: 1 }
+  );
+  const external = displays
+    .filter((display) => display.id !== current.id)
+    .sort((a, b) => {
+      const area = displayArea(b) - displayArea(a);
+      if (area) return area;
+      return (b.scaleFactor || 1) - (a.scaleFactor || 1);
+    });
+  return external[0] ?? current;
+}
+
+function audienceWindowBounds(display, fullscreen) {
+  const target = display || audienceDisplay();
+  if (fullscreen) {
+    const { x, y, width, height } = target.bounds;
+    return { x, y, width, height };
+  }
+  const work = target.workArea || target.bounds;
+  const scale = Math.min(1, work.width / 1920, work.height / 1080);
+  const width = Math.max(960, Math.round(1920 * scale));
+  const height = Math.max(540, Math.round(1080 * scale));
+  return {
+    x: work.x + Math.round((work.width - width) / 2),
+    y: work.y + Math.round((work.height - height) / 2),
+    width,
+    height,
+  };
+}
+
+function placeAudienceWindow(display = audienceDisplay()) {
+  if (!audienceWindow || audienceWindow.isDestroyed()) return;
+  const fullscreen = audienceWantsFullscreen();
+  const bounds = audienceWindowBounds(display, fullscreen);
+  if (audienceWindow.isFullScreen() && !fullscreen) audienceWindow.setFullScreen(false);
+  audienceWindow.setBounds(bounds, false);
+  if (fullscreen && !audienceWindow.isFullScreen()) audienceWindow.setFullScreen(true);
 }
 
 function createAudienceWindow() {
   if (audienceWindow && !audienceWindow.isDestroyed()) {
+    placeAudienceWindow();
+    applyAudienceWindowSettings();
     audienceWindow.focus();
     return;
   }
   const display = audienceDisplay();
-  const { x, y, width, height } = display.bounds;
   const settings = currentSettings();
+  const fullscreen = audienceWantsFullscreen();
+  const bounds = audienceWindowBounds(display, fullscreen);
   audienceWindow = new BrowserWindow({
-    x,
-    y,
-    width,
-    height,
-    fullscreen: audienceWantsFullscreen(),
+    ...bounds,
+    fullscreen,
     backgroundColor: '#07090d',
     title: 'WFL Medal Count — Audience',
     autoHideMenuBar: true,
@@ -592,6 +667,7 @@ function createAudienceWindow() {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      zoomFactor: 1,
     },
   });
   audienceWindow.loadURL(audienceUrl());
@@ -601,9 +677,25 @@ function createAudienceWindow() {
     emitState();
   });
   audienceWindow.webContents.on('did-finish-load', () => {
+    try {
+      audienceWindow.webContents.setZoomFactor(1);
+    } catch {
+      /* older electron */
+    }
     audienceWindow.webContents.send('audience-update', audienceFromState(currentDecorated()));
   });
   applyAudienceWindowSettings();
+}
+
+function watchAudienceDisplays() {
+  const relocate = () => {
+    if (!audienceWindow || audienceWindow.isDestroyed()) return;
+    placeAudienceWindow();
+    applyAudienceWindowSettings();
+  };
+  screen.on('display-added', relocate);
+  screen.on('display-removed', relocate);
+  screen.on('display-metrics-changed', relocate);
 }
 
 function closeAudience(force = false) {
@@ -693,11 +785,12 @@ app.whenReady().then(() => {
 
   // Show the control window as soon as basic state APIs exist.
   createMainWindow();
+  watchAudienceDisplays();
 
   ipcMain.handle('sync-season', async () => {
     if (store.sync.running) return decorateState(store, paths);
     store.sync = { running: true, message: 'Starting…', current: 0, total: 0 };
-    emitState();
+    emitState({ immediate: true });
     try {
       await syncSeason(store, paths, (message, current = 0, total = 0) => {
         store.sync = { running: true, message, current, total };
@@ -713,7 +806,7 @@ app.whenReady().then(() => {
         total: 0,
       };
     }
-    return emitState();
+    return emitState({ immediate: true });
   });
 
   ipcMain.handle('set-active-grade', (_event, gradeId) => {
@@ -726,13 +819,13 @@ app.whenReady().then(() => {
     ensureScoreboard();
     store.scoreboard.gradeId = store.activeGradeId;
     store.scoreboard.roundId = null;
-    persist();
+    persistSoon();
     return emitState();
   });
 
   ipcMain.handle('select-game', (_event, gameId) => {
     store.selectedGameId = gameId;
-    persist();
+    persistSoon();
     return emitState();
   });
 
@@ -974,7 +1067,8 @@ app.whenReady().then(() => {
       ...found.game.votes,
       ...votes,
     }, voteScaleForGrade(found.grade));
-    persist();
+    decoratedCache = null;
+    persistSoon();
     return emitState();
   });
 
@@ -982,7 +1076,8 @@ app.whenReady().then(() => {
     const found = findGame(gameId);
     if (!found || isForfeitGame(found.game)) return decorateState(store, paths);
     found.game.votes = applyPlayerVote(found.game.votes, playerId, voteScaleForGrade(found.grade));
-    persist();
+    decoratedCache = null;
+    persistSoon();
     return emitState();
   });
 
@@ -1027,7 +1122,8 @@ app.whenReady().then(() => {
   ipcMain.handle('clear-votes', (_event, gameId) => {
     const found = findGame(gameId);
     if (found) found.game.votes = emptyVotes();
-    persist();
+    decoratedCache = null;
+    persistSoon();
     return emitState();
   });
 
@@ -1715,7 +1811,8 @@ app.whenReady().then(() => {
       if (leaders) delete leaders[previous];
     }
     pruneTotyCaptains(id);
-    persist();
+    decoratedCache = null;
+    persistSoon();
     return emitState();
   });
 
@@ -1729,7 +1826,8 @@ app.whenReady().then(() => {
     if (!leaders) return emitState();
     store.teamOfTheYearCaptains[id] = setTotyCaptainAssignment(leaders, pid, roleId);
     pruneTotyCaptains(id);
-    persist();
+    decoratedCache = null;
+    persistSoon();
     return emitState();
   });
 

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { startTransition, useEffect, useRef, useState } from 'react';
 import { NormalizedLogo } from '../shared/NormalizedLogo.jsx';
 import { TotyPitch } from '../shared/TotyPitch.jsx';
+import { AudienceShell } from './AudienceShell.jsx';
 import cornerArt from '../assets/lower-third-corner.png';
 const api = window.wflMedal;
 
@@ -854,8 +855,8 @@ export function AudienceApp() {
   const [state, setState] = useState(null);
 
   useEffect(() => {
-    api.getAudienceState().then(setState);
-    return api.onAudience(setState);
+    api.getAudienceState().then((next) => startTransition(() => setState(next)));
+    return api.onAudience((next) => startTransition(() => setState(next)));
   }, []);
 
   useEffect(() => {
@@ -929,32 +930,26 @@ export function AudienceApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, [state?.audienceView, state?.settings?.audienceFullscreen]);
 
+  let stage = null;
+
   if (state?.audienceView === 'leaderboard') {
-    return <LeaderboardStage state={state} />;
+    stage = <LeaderboardStage state={state} />;
+  } else if (state?.audienceView === 'toty') {
+    stage = <TotyStage state={state} />;
+  } else if (state?.audienceView === 'lifemembers') {
+    stage = <LifeMembersStage state={state} />;
+  } else if (state?.audienceView === 'splash') {
+    stage = <SplashStage state={state} />;
+  } else if (state?.audienceView === 'cue') {
+    stage = <CueStage state={state} />;
+  } else if (state?.audienceView === 'crowd') {
+    stage = <PhotoWallStage state={state} />;
+  } else if (state?.audienceView === 'scoreboard') {
+    stage = <VoteCountStage state={state} />;
   }
 
-  if (state?.audienceView === 'toty') {
-    return <TotyStage state={state} />;
-  }
-
-  if (state?.audienceView === 'lifemembers') {
-    return <LifeMembersStage state={state} />;
-  }
-
-  if (state?.audienceView === 'splash') {
-    return <SplashStage state={state} />;
-  }
-
-  if (state?.audienceView === 'cue') {
-    return <CueStage state={state} />;
-  }
-
-  if (state?.audienceView === 'crowd') {
-    return <PhotoWallStage state={state} />;
-  }
-
-  if (state?.audienceView === 'scoreboard') {
-    return <VoteCountStage state={state} />;
+  if (stage) {
+    return <AudienceShell>{stage}</AudienceShell>;
   }
 
   const slide = state?.presentation?.current;
@@ -969,6 +964,7 @@ export function AudienceApp() {
   const specialtyColors = slide?.specialtyColors || null;
 
   return (
+    <AudienceShell>
     <div
       className={`stage type-${slide?.type ?? 'empty'}${specialtyTheme ? ` specialty-${specialtyTheme}` : ''}`}
       style={specialtyStyle(specialtyColors)}
@@ -1101,6 +1097,7 @@ export function AudienceApp() {
 
       {settings.showSponsors !== false ? <SponsorStrip sponsors={slide?.sponsors} /> : null}
     </div>
+    </AudienceShell>
   );
 }
 

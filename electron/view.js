@@ -898,6 +898,25 @@ function summarizeDeck(deck) {
   };
 }
 
+/** Cheap deck summary for the night list — avoids building every grade's full slide deck. */
+function summarizeGradeDeck(grade, settings) {
+  const rounds = (grade?.rounds ?? []).filter((round) => includeRound(round, settings));
+  const numbers = [];
+  for (const round of rounds) {
+    const n = roundNumberFromName(round.name) ?? roundNumberFromName(round.displayName);
+    if (n != null && !numbers.includes(n)) numbers.push(n);
+  }
+  return {
+    id: grade.id,
+    name: grade.name,
+    medalTitle: grade.medalTitle,
+    slideCount: 0,
+    roundCount: numbers.length || rounds.length,
+    firstRound: numbers[0] ?? null,
+    lastRound: numbers.length ? numbers[numbers.length - 1] : null,
+  };
+}
+
 function clubsForGrade(clubs, grade) {
   const women = isWomenGrade(grade);
   return (clubs ?? []).map((club) => {
@@ -1189,22 +1208,7 @@ export function decorateState(store, paths) {
     !Array.isArray(store.presentation.starts)
       ? store.presentation.starts
       : {};
-  const deckFor = (grade) => ({
-    id: grade.id,
-    name: grade.name,
-    medalTitle: grade.medalTitle,
-    slides: decorateSlides(
-      buildSlides(grade, clubsForGrade(rawClubs, grade), store.sponsors, settings, {
-        competition: store.competition,
-      }),
-      sponsors,
-      store.competition,
-      paths
-    ),
-  });
-  const allDecks = allGrades.map(deckFor);
-  const decks = allDecks.filter((deck) => grades.some((grade) => grade.id === deck.id));
-  const knownIds = new Set(allDecks.map((deck) => deck.id));
+  const knownIds = new Set(allGrades.map((grade) => String(grade.id)));
   const queue = normalizePresentationQueue(store.presentation?.queue);
   const queueItem = queue[store.presentation?.queueIndex ?? 0];
   const queueGradeIds = queueItem?.type === 'preso'
@@ -1226,7 +1230,10 @@ export function decorateState(store, paths) {
       paths
     );
   };
+  // Only build the live presentation deck; night-list decks are cheap round summaries.
   const slides = slidesFromStartRound(presoSlidesFor(presentationGrade?.id), starts[presentationGrade?.id]);
+  const allDecks = allGrades.map((grade) => summarizeGradeDeck(grade, settings));
+  const decks = allDecks.filter((deck) => grades.some((grade) => grade.id === deck.id));
 
   const slideIndex = Math.min(store.presentation?.slideIndex ?? 0, Math.max(0, slides.length - 1));
   const currentSlide = slides[slideIndex] ?? null;
@@ -1283,8 +1290,8 @@ export function decorateState(store, paths) {
                 : presentationGrade?.id ?? null),
       slides,
       current: currentSlide,
-      decks: decks.map(summarizeDeck),
-      allDecks: allDecks.map(summarizeDeck),
+      decks,
+      allDecks,
     },
     scoreboard: scoreboardView(store, clubs, settings, sponsors, currentSlide, grades, null, paths),
     roster,
