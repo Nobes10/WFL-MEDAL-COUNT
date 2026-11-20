@@ -572,6 +572,8 @@ export const DEFAULT_SETTINGS = {
   refreshScoresOnLaunch: true,
   leaderboardSize: 8,
   liveVoteCount: 6,
+  /** 0 = always show. Otherwise hide the live tally beside games after this home-and-away round. */
+  hideLiveCountAfterRound: 0,
   showFinals: false,
   placeholderGrandFinal: true,
   crowdHoldMs: 6000,
@@ -597,6 +599,12 @@ export function mergeSettings(raw = {}) {
   next.leagueName = String(next.leagueName || DEFAULT_SETTINGS.leagueName).trim().slice(0, 80) || DEFAULT_SETTINGS.leagueName;
   next.leaderboardSize = Math.min(20, Math.max(3, Math.round(Number(next.leaderboardSize) || 8)));
   next.liveVoteCount = 6;
+  {
+    const n = Number(next.hideLiveCountAfterRound);
+    next.hideLiveCountAfterRound = Number.isFinite(n)
+      ? Math.min(40, Math.max(0, Math.round(n)))
+      : DEFAULT_SETTINGS.hideLiveCountAfterRound;
+  }
   const clampCrowd = (value, min, max, fallback) => {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
@@ -634,6 +642,18 @@ export function mergeSettings(raw = {}) {
 
 export function includeRound(round, settings) {
   return Boolean(mergeSettings(settings).showFinals) || !isFinalsRound(round);
+}
+
+/** Live vote count column beside round / match / votes slides. */
+export function showLiveCountForRound(roundNameOrNumber, settings) {
+  const after = mergeSettings(settings).hideLiveCountAfterRound;
+  if (!after) return true;
+  const roundNo =
+    typeof roundNameOrNumber === 'number'
+      ? roundNameOrNumber
+      : homeAndAwayRoundNumber(roundNameOrNumber);
+  if (roundNo == null) return true;
+  return roundNo <= after;
 }
 
 export function venueDisplayName(surface) {

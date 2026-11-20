@@ -108,7 +108,8 @@ html, body, #root {
   gap: 12px 16px;
   align-items: stretch;
 }
-.game-with-tally .match-main {
+.game-with-tally .match-main,
+.match-solo .match-main {
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -117,9 +118,17 @@ html, body, #root {
   justify-content: center;
   gap: 14px;
 }
-.game-with-tally .match-slide {
+.game-with-tally .match-slide,
+.match-solo .match-slide {
   flex: 1;
   min-width: 0;
+  width: 100%;
+}
+.match-solo {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   width: 100%;
 }
 .match-slide {

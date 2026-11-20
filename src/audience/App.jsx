@@ -130,8 +130,10 @@ function ScoreboardPanel({
   topN = 8,
   showTopBoard = true,
 }) {
+  // Always reserve the live-count column (even Round 1 with an empty board)
+  // so games stay the same size as later rounds.
   const rows = showTopBoard ? (top8 ?? []).slice(0, topN) : [];
-  const showBoard = Boolean(showTopBoard && rows.length);
+  const showBoard = Boolean(showTopBoard);
   const title = roundTitle || roundName || 'Select a round';
   return (
     <div
@@ -992,12 +994,13 @@ export function AudienceApp() {
           games={slide.games}
           top8={slide.board}
           topN={liveN}
+          showTopBoard={slide.showLiveCount !== false}
           live
         />
       )}
 
       {slide?.type === 'match' && (
-        <div className="game-with-tally">
+        <div className={slide.showLiveCount === false ? 'match-solo' : 'game-with-tally'}>
           <div className="match-main">
             <SpecialtyPin url={slide.specialtyPinUrl} name={slide.specialtyName} />
             <div className={`match-slide${slide.forfeit ? ' is-forfeit' : ''}`}>
@@ -1013,13 +1016,13 @@ export function AudienceApp() {
               <ClubSide logo={slide.awayLogoUrl} score={slide.forfeit ? null : slide.awayScoreLine} />
             </div>
           </div>
-          <Top8 rows={slide.board} live topN={liveN} />
+          {slide.showLiveCount !== false ? <Top8 rows={slide.board} live topN={liveN} /> : null}
         </div>
       )}
 
       {slide?.type === 'votes' && (
         <div
-          className={`votes-stage has-tally${specialtyTheme ? ` specialty-${specialtyTheme}` : ''}`}
+          className={`votes-stage${slide.showLiveCount !== false ? ' has-tally' : ''}${specialtyTheme ? ` specialty-${specialtyTheme}` : ''}`}
           style={specialtyStyle(specialtyColors)}
         >
           <div className="votes-main">
@@ -1044,7 +1047,7 @@ export function AudienceApp() {
               })}
             </div>
           </div>
-          <Top8 rows={slide.board} live topN={liveN} />
+          {slide.showLiveCount !== false ? <Top8 rows={slide.board} live topN={liveN} /> : null}
         </div>
       )}
 

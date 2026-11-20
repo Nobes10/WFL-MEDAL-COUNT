@@ -3167,6 +3167,7 @@ function PlayerPhotosPanel({ state, grades }) {
   const [section, setSection] = useState('need');
   const [query, setQuery] = useState('');
   const [busyId, setBusyId] = useState(null);
+  const [copiedNames, setCopiedNames] = useState(false);
   const missing = useMemo(() => playersNeedingPhotos(state, grades), [state, grades]);
   const imported = state?.importedPhotos ?? [];
   const importedGroups = useMemo(() => groupImportedPhotosByClub(imported), [imported]);
@@ -3195,6 +3196,15 @@ function PlayerPhotosPanel({ state, grades }) {
     }
   }
 
+  async function copyMissingNames() {
+    if (!filteredMissing.length) return;
+    await api.copyText(
+      missingPhotosText('Need a photo', state?.season ? `Season ${state.season}` : '', filteredMissing)
+    );
+    setCopiedNames(true);
+    window.setTimeout(() => setCopiedNames(false), 1400);
+  }
+
   return (
     <div className="player-photos-panel">
       <div className="player-photos-panel-head">
@@ -3218,6 +3228,18 @@ function PlayerPhotosPanel({ state, grades }) {
             onClick={() => setSection('imported')}
           >
             Imported{imported.length ? ` · ${imported.length}` : ''}
+          </button>
+          <button
+            type="button"
+            disabled={section !== 'need' || !filteredMissing.length}
+            onClick={copyMissingNames}
+            title={
+              filteredMissing.length
+                ? 'Copy the Need a photo names to the clipboard'
+                : 'No players without photos to copy'
+            }
+          >
+            {copiedNames ? 'Copied' : 'Copy names'}
           </button>
           <button type="button" onClick={() => api.refreshAudiencePhotos()}>
             Refresh audience
@@ -3554,6 +3576,14 @@ function SettingsPanel({ state, grade, grades }) {
             max={20}
             onCommit={(value) => setFlag('leaderboardSize', value)}
           />
+          <SettingNumber
+            label="Hide live count after round"
+            hint="0 = always show beside games. e.g. 10 keeps it through Round 10, then hides it"
+            value={s.hideLiveCountAfterRound ?? 0}
+            min={0}
+            max={40}
+            onCommit={(value) => setFlag('hideLiveCountAfterRound', value)}
+          />
         </section>
 
         <section>
@@ -3625,7 +3655,10 @@ function SettingsPanel({ state, grade, grades }) {
         <section>
           <h3>Live vote count</h3>
           <p className="muted">
-            Full-screen medal tally for the selected grade. It updates as votes are entered, and sits beside each game in the presentation.
+            Full-screen medal tally for the selected grade. It updates as votes are entered, and sits beside each game in the presentation
+            {(s.hideLiveCountAfterRound ?? 0) > 0
+              ? ` through Round ${s.hideLiveCountAfterRound}, then hides.`
+              : '.'}
           </p>
           <div className="round-picks">
             {(grades ?? state.grades ?? []).map((item) => (

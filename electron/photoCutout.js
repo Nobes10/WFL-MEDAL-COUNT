@@ -1,8 +1,64 @@
-import { writeFileSync } from 'fs';
+import { existsSync, writeFileSync } from 'fs';
+import { createRequire } from 'module';
+import { dirname, join } from 'path';
 import { pathToFileURL } from 'url';
 import sharp from 'sharp';
 
 let removeBackgroundFn = null;
+let imglyPublicPathCache = null;
+
+const requireFromHere = createRequire(import.meta.url);
+
+/** Prefer real disk paths — Electron packs models under app.asar.unpacked. */
+function toUnpackedPath(filePath) {
+  return String(filePath || '').replace(/app\.asar(?!\.unpacked)/g, 'app.asar.unpacked');
+}
+
+/**
+ * @imgly defaults publicPath to cwd/node_modules/… which is missing in the
+ * GitHub installer. Point at the packaged dist folder that holds resources.json.
+ */
+function resolveImglyPublicPath() {
+  if (imglyPublicPathCache) return imglyPublicPathCache;
+
+  const candidates = [];
+  try {
+    const entry = requireFromHere.resolve('@imgly/background-removal-node');
+    candidates.push(dirname(entry));
+  } catch {
+    /* ignore — try resourcesPath / cwd next */
+  }
+  if (process.resourcesPath) {
+    candidates.push(
+      join(
+        process.resourcesPath,
+        'app.asar.unpacked',
+        'node_modules',
+        '@imgly',
+        'background-removal-node',
+        'dist'
+      )
+    );
+  }
+  candidates.push(
+    join(process.cwd(), 'node_modules', '@imgly', 'background-removal-node', 'dist')
+  );
+
+  for (const raw of candidates) {
+    if (!raw) continue;
+    for (const dir of [toUnpackedPath(raw), raw]) {
+      if (existsSync(join(dir, 'resources.json'))) {
+        const url = pathToFileURL(dir).href;
+        imglyPublicPathCache = url.endsWith('/') ? url : `${url}/`;
+        return imglyPublicPathCache;
+      }
+    }
+  }
+
+  throw new Error(
+    'Background-removal models not found. Reinstall the app or run from the project with node_modules installed.'
+  );
+}
 
 async function getRemoveBackground() {
   if (removeBackgroundFn) return removeBackgroundFn;
@@ -230,8 +286,15 @@ export async function cleanCutoutBuffer(inputBuffer) {
 /** Cut the subject out of a photo. Writes a transparent WebP like MatchDay portraits. */
 export async function cutOutPlayerPhoto(sourcePath, destPath) {
   const removeBackground = await getRemoveBackground();
-  const blob = await removeBackground(pathToFileURL(String(sourcePath)), {
+  const src = String(sourcePath || '');
+  if (!src || !existsSync(src)) {
+    throw new Error(`Photo file not found: ${src || '(empty path)'}`);
+  }
+  const blob = await removeBackground(pathToFileURL(src), {
     model: 'medium',
+    publicPath: resolveImglyPublicPath(),
+    // Main-process Electron: workers lose the packaged model path.
+    proxyToWorker: false,
     output: { format: 'image/png', quality: 1 },
   });
   const raw = Buffer.from(await blob.arrayBuffer());

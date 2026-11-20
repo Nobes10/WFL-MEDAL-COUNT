@@ -6,6 +6,7 @@ import {
   isWomenGrade,
   leagueGradeFrom,
   mergeSettings,
+  showLiveCountForRound,
   totyGradeFrom,
   voteKeyForPoints,
   voteScaleForGrade,
@@ -354,6 +355,7 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
     });
     const isStartRound = Boolean(fromRound && roundNo === fromRound);
     if (!playable.length && !isStartRound) continue;
+    const showLiveCount = showLiveCountForRound(roundNo ?? round.name, s);
 
     if (s.showRoundScoreboard) {
       slides.push({
@@ -365,6 +367,7 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
         medalTitle: grade.medalTitle,
         season: grade.season,
         topN,
+        showLiveCount,
         games: (round.games ?? []).map((game) => ({
           id: game.id,
           status: game.status,
@@ -378,7 +381,11 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
           ...forfeitSlideFields(game),
         })),
         liveTopN: liveN,
-        board: previousRoundId ? tallyGrade(grade, clubs, previousRoundId, s).slice(0, liveN) : [],
+        board: showLiveCount
+          ? previousRoundId
+            ? tallyGrade(grade, clubs, previousRoundId, s).slice(0, liveN)
+            : []
+          : [],
       });
     }
 
@@ -395,8 +402,9 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
           medalTitle: grade.medalTitle,
           season: grade.season,
           topN,
+          showLiveCount,
           liveTopN: liveN,
-          board: liveBoard(grade, clubs, s, game.id, null, liveN),
+          board: showLiveCount ? liveBoard(grade, clubs, s, game.id, null, liveN) : [],
           homeName: game.homeName,
           awayName: game.awayName,
           venueName: game.venueName || '',
@@ -423,6 +431,7 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
         season: grade.season,
         showMatchScore: s.showMatchScoreOnVotes,
         topN,
+        showLiveCount,
         liveTopN: liveN,
         homeName: game.homeName,
         awayName: game.awayName,
@@ -439,14 +448,14 @@ export function buildSlides(grade, clubs = [], _sponsors = [], settings = {}, op
         slides.push({
           ...votesSlide,
           reveal: null,
-          board: liveBoard(grade, clubs, s, game.id, null, liveN),
+          board: showLiveCount ? liveBoard(grade, clubs, s, game.id, null, liveN) : [],
         });
       }
       for (const pick of picks) {
         slides.push({
           ...votesSlide,
           reveal: pick.points,
-          board: liveBoard(grade, clubs, s, game.id, pick.points, liveN),
+          board: showLiveCount ? liveBoard(grade, clubs, s, game.id, pick.points, liveN) : [],
         });
       }
     }
